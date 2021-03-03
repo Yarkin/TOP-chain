@@ -1,14 +1,15 @@
-remove_definitions(
-    -DGOSSIP_WITH_WROUTER
+aux_source_directory(./ xwrouter_demo_dir)
+add_executable(xwrouter_demo ${xwrouter_demo_dir})
+
+add_definitions(
 )
 
-aux_source_directory(./ xkad_demo_dir)
-add_executable(xkad_demo ${xkad_demo_dir})
-
-add_dependencies(xkad_demo xgossip xxbase)
+add_dependencies(xwrouter_demo xvnetwork xxbase xpbase)
 
 IF (CMAKE_SYSTEM_NAME MATCHES "Linux")
-    target_link_libraries(xkad_demo
+    target_link_libraries(xwrouter_demo
+        xwrouter
+        xvnetwork
         xgossip
         xkad
         xtransport
@@ -16,7 +17,6 @@ IF (CMAKE_SYSTEM_NAME MATCHES "Linux")
         xcrypto
         xutility
         xxbase
-        xdb
         protobuf
         -lgtest
         -lgmock
@@ -24,7 +24,9 @@ IF (CMAKE_SYSTEM_NAME MATCHES "Linux")
         -lrt
     )
 ELSEIF (CMAKE_SYSTEM_NAME MATCHES "Darwin")
-    target_link_libraries(xkad_demo
+    target_link_libraries(xwrouter_demo
+        xwrouter
+        xvnetwork
         xgossip
         xkad
         xtransport
@@ -32,7 +34,6 @@ ELSEIF (CMAKE_SYSTEM_NAME MATCHES "Darwin")
         xcrypto
         xutility
         xxbase
-        xdb
         protobuf
         -lgtest
         -lgmock
