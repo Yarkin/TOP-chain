@@ -27,7 +27,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     add_compile_options(/utf-8) # input/output as utf-8
 endif()
 
-set(LINK_ARGS secp256k1 trezor-crypto ssl crypto xchain_upgrade)
+set(LINK_ARGS secp256k1 trezor-crypto ssl crypto)
 if(NOT MSVC)
     set(LINK_ARGS ${LINK_ARGS} hiredis pthread)
 endif()
@@ -54,4 +54,4 @@ target_link_libraries(xchaininit PRIVATE ${LINK_ARGS}
     db_tool
     xxbase
     jsoncpp
-    -lpthread -ldl)
+    -lpthread -ldl xchain_upgrade)
