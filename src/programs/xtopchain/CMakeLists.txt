@@ -63,8 +63,8 @@ target_link_libraries(xtopchain_bin PRIVATE xchaininit ${LINK_ARGS} xtopcl
     xxbase xdata xcrypto jsoncpp)
 
 if (BUILD_METRICS)
-    add_dependencies(xtopchain xmetrics)
+    #add_dependencies(xtopchain xmetrics)
     target_link_libraries(xtopchain PRIVATE xmetrics)
-    add_dependencies(xtopchain_bin xmetrics)
+    #add_dependencies(xtopchain_bin xmetrics)
     target_link_libraries(xtopchain_bin PRIVATE xmetrics)
 endif()

@@ -31,10 +31,10 @@ set(LINK_ARGS secp256k1 trezor-crypto ssl crypto)
 if(NOT MSVC)
     set(LINK_ARGS ${LINK_ARGS} hiredis pthread)
 endif()
-add_dependencies(xchaininit xapplication xdata xconfig xvnode xelect xstore xvnetwork xrpc xelect_common xtopcl xxbase)
+#add_dependencies(xchaininit xapplication xdata xconfig xvnode xelect xstore xvnetwork xrpc xelect_common xtopcl xxbase)
 
 #if (BUILD_VIRTUAL_NODE)
-#    add_dependencies(xchaininit xservices)
+#    #add_dependencies(xchaininit xservices)
 #    target_link_libraries(xchaininit PRIVATE xservices)
 #endif()
 
