@@ -517,7 +517,7 @@ bool xlightunit_block_t::extract_sub_txs(std::vector<base::xvtransaction_index_p
     uint64_t unit_height = get_height();
     const std::string & unit_hash = get_block_hash();
     for (auto & tx : txs_info) {
-        base::xvtransaction_index_ptr_t tx_index = make_object_ptr<base::xvtransaction_index_t>(unit_height, unit_hash, tx->get_tx_hash(), tx->get_tx_subtype(), tx->get_raw_tx().get());
+        base::xvtransaction_index_ptr_t tx_index = make_object_ptr<base::xvtxindex_t>(*this, tx->get_raw_tx().get(), tx->get_tx_hash(), tx->get_tx_subtype());
         sub_txs.push_back(tx_index);
     }
     return true;
