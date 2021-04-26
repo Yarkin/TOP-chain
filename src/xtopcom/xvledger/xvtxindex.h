@@ -5,7 +5,6 @@
 #pragma once
 #include "xbase/xdata.h"
 #include "xbase/xobject_ptr.h"
-#include "xvledger/xvtxindex.h"
 
 namespace top
 {
