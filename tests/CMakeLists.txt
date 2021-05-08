@@ -2,6 +2,7 @@ add_compile_options(-Wno-unused-parameter)
 add_compile_options(-Wno-narrowing)
 
 add_subdirectory(xbasic)
+add_subdirectory(mem_test)
 #add_subdirectory(xvm)
 add_subdirectory(xcommon)
 add_subdirectory(xrouter)
