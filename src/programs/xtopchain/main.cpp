@@ -4,7 +4,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
-
+#include <malloc.h>
 #include "xchaininit/xinit.h"
 #include "xpbase/base/top_utils.h"
 #include "xchaininit/version.h"
@@ -56,10 +56,15 @@ int start_monitor_thread() {
 #ifdef ENABLE_NTP
     // std::thread(ntp_thread_proc).detach();
 #endif
+    while (true) {
+        malloc_trim(0);
+        sleep(600000);
+    }
     return 0;
 }
 
 int main(int argc, char * argv[]) {
+    auto iret = mallopt(M_TRIM_THRESHOLD, 64 * 1024) ;
     StartCheckHeap();
 
     // use this to join or quit network, config show_cmd = false will come here
