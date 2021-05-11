@@ -606,9 +606,9 @@ void xtop_vhost::do_handle_network_data() {
                                      &callback,
                                      top::get<common::xnode_address_t const>(callback_info).to_string().c_str());
 #ifdef ENABLE_METRICS
-                                char hex_msg_id[9] = {0};
-                                snprintf(hex_msg_id, 8, "%x", vnetwork_message.message().id());
-                                XMETRICS_TIME_RECORD_KEY_WITH_TIMEOUT("vhost_handle_data_callback", hex_msg_id, uint32_t(100000));
+                                char msg_info[30] = {0};
+                                snprintf(msg_info, 29, "%x|%" PRIx64, vnetwork_message.message().id(), message.hash());
+                                XMETRICS_TIME_RECORD_KEY_WITH_TIMEOUT("vhost_handle_data_callback", msg_info, uint32_t(100000));
 #endif
                                 callback(sender, message, msg_time);
                             } catch (std::exception const & eh) {

@@ -6,7 +6,10 @@
 
 #include "xunit_service/xcons_utl.h"
 #include "xvnetwork/xvnetwork_error2.h"
-
+#include "time.h"
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 #include <cinttypes>
 
 NS_BEG2(top, xunit_service)
@@ -212,11 +215,31 @@ bool xnetwork_proxy::unlisten(const xvip2_t & addr, common::xmessage_category_t 
     return true;
 }
 
+class xstack_cost {
+public:
+    xstack_cost(const std::string & tag) :m_tag(tag){
+        start = clock();
+    }
+
+    ~xstack_cost() {
+        end = clock();
+        xinfo("[xunitservice] %s cost:%d", m_tag.c_str(), (int32_t)(end - start));
+    }
+private:
+    std::string m_tag;
+    time_t start, end;
+};
+
 // network message callback
 void xnetwork_proxy::on_message(top::vnetwork::xvnode_address_t const & sender, top::vnetwork::xvnode_address_t const & receiver, top::vnetwork::xmessage_t const & message) {
     auto to = xcons_utl::to_xip2(receiver);
     auto from = xcons_utl::to_xip2(sender);
     auto category = get_message_category(message.id());
+#if DEBUG
+    char tag[256] = {0};
+    snprintf(tag, 255, "network on_message category=%x, at_node:%s", message.id(), xcons_utl::xip_to_hex(to).c_str());
+    xstack_cost cost(tag);
+#endif
     xpdu_reactor_ptr cb{nullptr};
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -236,10 +259,10 @@ void xnetwork_proxy::on_message(top::vnetwork::xvnode_address_t const & sender, 
         pdu->serialize_from(stream);
         auto xip_from = xcons_utl::to_xip2(sender);
         cb->on_pdu(xip_from, to, *pdu);
-        xinfo("xnetwork_proxy::on_message succ,category=%x,pdu=%s,at_node:%s %p", category, pdu->dump().c_str(), xcons_utl::xip_to_hex(to).c_str(), &cb);
+        xinfo("[xunitservice] network on_message succ,category=%x,pdu=%s,at_node:%s %p", category, pdu->dump().c_str(), xcons_utl::xip_to_hex(to).c_str(), &cb);
         pdu->release_ref();
     } else {
-        xwarn("xnetwork_proxy::on_message fail-no reactor for %" PRIx64 " category %x from: %" PRIx64, to.low_addr, category, from.low_addr);
+        xwarn("[xunitservice] network on_message fail-no reactor for %" PRIx64 " category %x from: %" PRIx64, to.low_addr, category, from.low_addr);
     }
 }
 
