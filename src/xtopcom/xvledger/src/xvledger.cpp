@@ -6,6 +6,7 @@
 #include "../xvledger.h"
 #include "xbase/xcontext.h"
 #include "xbase/xthread.h"
+#include "xmetrics/xmetrics.h"
 
 namespace top
 {
@@ -18,6 +19,7 @@ namespace top
         {
             memset(m_plugins,0,sizeof(m_plugins));
             xinfo("xvaccountobj_t::xvaccountobj_t,acccount(%s)-xvid(%llu)",get_address().c_str(),get_xvid());
+            XMETRICS_GAUGE(metrics::dataobject_xvaccountobj, 1);
         }
     
         xvaccountobj_t::~xvaccountobj_t()
@@ -26,10 +28,10 @@ namespace top
             for(int i = 0; i < enum_xvaccount_plugin_max; ++i)
             {
                 xobject_t* old_ptr = m_plugins[i];
-// TODO(jimmy)               xassert(old_ptr == NULL); //MUST did clean before destruction
                 if(old_ptr != NULL)//catch exception case if have
-                    xcontext_t::instance().delay_release_object(old_ptr);
+                    old_ptr->release_ref();
             }
+            XMETRICS_GAUGE(metrics::dataobject_xvaccountobj, -1);
         }
     
         bool xvaccountobj_t::close(bool force_async)
@@ -87,9 +89,6 @@ namespace top
         //return to indicate setup successful or not
         bool  xvaccountobj_t::set_plugin(xobject_t * plugin_obj,enum_xvaccount_plugin_type plugin_type)
         {
-            if(NULL == plugin_obj)
-                return false;
-            
             std::lock_guard<std::recursive_mutex> locker(get_lock());
             return set_plugin_unsafe(plugin_obj,plugin_type);
         }
@@ -97,23 +96,21 @@ namespace top
         //locked by table or account self in advance
         bool  xvaccountobj_t::set_plugin_unsafe(xobject_t * new_plugin_obj,enum_xvaccount_plugin_type plugin_type)
         {
-            if(NULL == new_plugin_obj)
-                return false;
-            
             if(is_close()) //object not avaiable
             {
                 if(new_plugin_obj != nullptr)
                     xerror("xvaccountobj_t::set_plugin,closed account(%s)",get_address().c_str());
                 return false;
             }
-            if(plugin_type >= enum_xvaccount_plugin_max)
-            {
-                xerror("xvaccountobj_t::set_plugin,bad plugin_type(%d) >= enum_max_plugins_count(%d)",plugin_type,enum_xvaccount_plugin_max);
-                return false;
-            }
-            
+
             if(new_plugin_obj != nullptr) //setup
             {
+                if(plugin_type >= enum_xvaccount_plugin_max)
+                {
+                    xerror("xvaccountobj_t::set_plugin,bad plugin_type(%d) >= enum_max_plugins_count(%d)",plugin_type,enum_xvaccount_plugin_max);
+                    return false;
+                }
+                
                 xobject_t* existing_plugin_ptr = xatomic_t::xload(m_plugins[plugin_type]);
                 if(existing_plugin_ptr == new_plugin_obj) //same one
                     return true;
@@ -131,7 +128,7 @@ namespace top
             
             xobject_t* old_ptr = xatomic_t::xexchange(m_plugins[plugin_type],new_plugin_obj);
             if(NULL != old_ptr)//successful
-                xcontext_t::instance().delay_release_object(old_ptr);
+                old_ptr->release_ref();//quickly releasedd it
             
             if(nullptr == new_plugin_obj) //check whether it is ok to close account object
             {
@@ -183,14 +180,14 @@ namespace top
             }
             else//just clean closed ones
             {
-                for(auto it = m_accounts.begin(); it != m_accounts.end(); ++it)
+                for(auto it = m_accounts.begin(); it != m_accounts.end();)
                 {
                     auto old = it; //just copy the old value
                     ++it;
                     if(old->second->is_close())
                     {
                         old->second->release_ref();
-                        m_accounts.erase(it);
+                        m_accounts.erase(old);
                     }
                 }
             }
@@ -227,7 +224,10 @@ namespace top
             xvaccountobj_t * new_account_obj = new xvaccountobj_t(*this,account_address);
             exist_account_ptr = new_account_obj;
             if(old_account_obj != NULL)//it must has been closed
+            {
+                old_account_obj->close();
                 old_account_obj->release_ref();
+            }
             
             new_account_obj->add_ref(); //add reference for xauto_ptr
             return new_account_obj;
@@ -244,7 +244,10 @@ namespace top
             xvaccountobj_t * new_account_obj = new xvaccountobj_t(*this,account_address);
             exist_account_ptr = new_account_obj;
             if(old_account_obj != NULL)
+            {
+                old_account_obj->close();
                 old_account_obj->release_ref();
+            }
             
             return new_account_obj->get_plugin_unsafe(plugin_type);
         }
@@ -261,7 +264,10 @@ namespace top
             xvaccountobj_t * new_account_obj = new xvaccountobj_t(*this,account_address);
             exist_account_ptr = new_account_obj;
             if(old_account_obj != NULL)
+            {
+                old_account_obj->close();
                 old_account_obj->release_ref();
+            }
             
             return new_account_obj->get_plugin_unsafe(plugin_type);
         }
@@ -279,7 +285,10 @@ namespace top
                 xvaccountobj_t * new_account_obj = new xvaccountobj_t(*this,account_address);
                 exist_account_ptr = new_account_obj;
                 if(old_account_obj != NULL)
+                {
+                    old_account_obj->close();
                     old_account_obj->release_ref();
+                }
                 
                 return exist_account_ptr->set_plugin_unsafe(plugin_obj,plugin_type);
             }
@@ -472,9 +481,9 @@ namespace top
         }
 
         //----------------------------------xvchain_t------------------------------------//
+        xvchain_t * xvchain_t::__global_vchain_instance = NULL;
         xvchain_t &  xvchain_t::instance(const uint16_t chain_id)
         {
-            static xvchain_t * __global_vchain_instance = NULL;
             if(__global_vchain_instance != NULL)
                 return *__global_vchain_instance;
             

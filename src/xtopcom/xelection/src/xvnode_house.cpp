@@ -17,6 +17,8 @@
 #include "xvledger/xvblockstore.h"
 #include "xvledger/xvstate.h"
 #include "xvledger/xvledger.h"
+#include "xtopcl/include/user_info.h"
+#include "xpbase/base/top_utils.h"
 
 NS_BEG2(top, election)
 
@@ -170,11 +172,12 @@ void xvnode_house_t::load_group_from_store(const xvip2_t & target_node) {
 
     // TODO check flag, use committed block?
     base::xvaccount_t _vaddress(elect_address);
-    xauto_ptr<xvblock_t> blk_ptr = m_blockstore->load_block_object(_vaddress, elect_height, base::enum_xvblock_flag_committed, true);
+    XMETRICS_GAUGE(metrics::blockstore_access_from_vnodesrv, 1);
+    xauto_ptr<xvblock_t> blk_ptr = m_blockstore->load_block_object(_vaddress, elect_height, base::enum_xvblock_flag_committed, false);
     if (blk_ptr == nullptr)
         return;
 
-    base::xauto_ptr<base::xvbstate_t> bstate = base::xvchain_t::instance().get_xstatestore()->get_blkstate_store()->get_block_state(blk_ptr.get());
+    base::xauto_ptr<base::xvbstate_t> bstate = base::xvchain_t::instance().get_xstatestore()->get_blkstate_store()->get_block_state(blk_ptr.get(), metrics::statestore_access_from_vnodesrv_load_state);
     if (bstate == nullptr) {
         xwarn("xvnode_house_t::load_group_from_store fail-load state.block=%s", blk_ptr->dump().c_str());
         return;
@@ -277,7 +280,7 @@ void xvnode_house_t::add_group(const std::string &elect_address, uint64_t elect_
                         };
                         std::string pri_key{""};
                         if (m_node_id == bundle.node_id()) {
-                            pri_key = base::xstring_utl::base64_decode(m_sign_key);
+                            pri_key = DecodePrivateString(m_sign_key);
                         }
                         auto pub_key = base::xstring_utl::base64_decode(bundle.election_info().consensus_public_key.to_string());
 #if 0

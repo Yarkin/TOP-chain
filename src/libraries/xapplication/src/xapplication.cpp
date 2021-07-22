@@ -9,28 +9,29 @@
 #include "xapplication/xtop_chain_application.h"
 #include "xbasic/xmemory.hpp"
 #include "xbasic/xutility.h"
+#include "xblockstore/xblockstore_face.h"
 #include "xcertauth/xcertauth_face.h"
 #include "xchain_timer/xchain_timer.h"
 #include "xcodec/xmsgpack_codec.hpp"
 #include "xcommon/xip.h"
+#include "xconfig/xpredefined_configurations.h"
+#include "xconfig/xutility.h"
+#include "xdata/xblocktool.h"
 #include "xdata/xcodec/xmsgpack/xelection_result_store_codec.hpp"
 #include "xdata/xelect_transaction.hpp"
-#include "xdata/xelection/xelection_result_store.h"
 #include "xdata/xelection/xelection_result_property.h"
+#include "xdata/xelection/xelection_result_store.h"
 #include "xdata/xgenesis_data.h"
-#include "xconfig/xpredefined_configurations.h"
-#include "xdata/xblocktool.h"
 #include "xdata/xrootblock.h"
 #include "xdb/xdb_factory.h"
 #include "xelection/xvnode_house.h"
-#include "xloader/xconfig_onchain_loader.h"
 #include "xloader/xconfig_genesis_loader.h"
+#include "xloader/xconfig_onchain_loader.h"
 #include "xrouter/xrouter.h"
 #include "xstake/xstake_algorithm.h"
 #include "xstore/xstore_error.h"
-#include "xblockstore/xblockstore_face.h"
-#include "xvm/xsystem_contracts/deploy/xcontract_deploy.h"
 #include "xvm/manager/xcontract_manager.h"
+#include "xvm/xsystem_contracts/deploy/xcontract_deploy.h"
 
 #include <stdexcept>
 
@@ -54,9 +55,6 @@ xtop_application::xtop_application(common::xnode_id_t const & node_id, xpublic_k
     base::xvchain_t::instance().set_xdbstore(m_store.get());
     base::xvchain_t::instance().set_xevmbus(m_bus.get());
     m_blockstore.attach(store::get_vblockstore());
-#ifdef ENABLE_METRICS
-    m_datastat = make_unique<datastat::xdatastat_t>(make_observer(m_bus.get()));
-#endif
     m_nodesvr_ptr = make_object_ptr<election::xvnode_house_t>(node_id, sign_key, m_blockstore, make_observer(m_bus.get()));
 #ifdef MOCK_CA
     m_cert_ptr = make_object_ptr<xschnorrcert_t>((uint32_t)1);
@@ -76,7 +74,7 @@ void xtop_application::start() {
 
     contract::xcontract_deploy_t::instance().deploy_sys_contracts();
     contract::xcontract_manager_t::instance().instantiate_sys_contracts();
-    contract::xcontract_manager_t::instance().setup_blockchains(m_store.get(), m_blockstore.get());
+    contract::xcontract_manager_t::instance().setup_blockchains(m_blockstore.get());
 
     // load configuration first
     auto loader = std::make_shared<loader::xconfig_onchain_loader_t>(make_observer(m_store), make_observer(m_bus.get()), make_observer(m_logic_timer));
@@ -125,12 +123,12 @@ void xtop_application::start() {
         throw std::logic_error{"register node callback failed!"};
     }
 
-    // contract::xcontract_deploy_t::instance().deploy_sys_contracts();
-    // contract::xcontract_manager_t::instance().instantiate_sys_contracts();
-    // contract::xcontract_manager_t::instance().setup_blockchains(m_store.get(), m_blockstore.get());
     contract::xcontract_manager_t::set_nodesrv_ptr(node_service());
 
-    if (!is_beacon_account() || !is_genesis_node()) {
+    auto const last_logic_time = this->last_logic_time()->get_height();
+    auto const current_local_logic_time = config::gmttime_to_logic_time(base::xtime_utl::gmttime());
+    bool const offline_too_long = current_local_logic_time < last_logic_time || (last_logic_time != 0 && (current_local_logic_time - last_logic_time >= 30)); // 5min = 300s = 30 logic time
+    if (offline_too_long || (!is_beacon_account() && !is_genesis_node())) {
         m_elect_client->bootstrap_node_join();
     }
 
@@ -139,7 +137,7 @@ void xtop_application::start() {
         chain_app->start();
     }
 
-    m_logic_timer->update_time(last_logic_time()->get_height(), time::xlogic_timer_update_strategy_t::force);
+    m_logic_timer->update_time(last_logic_time, time::xlogic_timer_update_strategy_t::force);
 }
 
 void xtop_application::stop() {
@@ -231,7 +229,8 @@ xobject_ptr_t<store::xsyncvstore_t> xtop_application::syncstore() const noexcept
 }
 
 base::xauto_ptr<top::base::xvblock_t> xtop_application::last_logic_time() const {
-    return blockstore()->get_latest_committed_block(base::xvaccount_t(sys_contract_beacon_timer_addr));
+    XMETRICS_GAUGE(metrics::blockstore_access_from_application, 1);
+    return blockstore()->get_latest_cert_block(base::xvaccount_t(sys_contract_beacon_timer_addr));
 }
 
 bool xtop_application::check_rootblock() {
@@ -358,40 +357,50 @@ bool xtop_application::is_genesis_node() const noexcept {
 }
 
 bool xtop_application::is_beacon_account() const noexcept {
-    auto const & user_params = data::xuser_params::get_instance();
-    top::common::xnode_id_t node_id = top::common::xnode_id_t{user_params.account};
+    try {
+        auto const & user_params = data::xuser_params::get_instance();
+        top::common::xnode_id_t node_id = top::common::xnode_id_t{ user_params.account };
 
-    std::string result;
-    auto latest_vblock = data::xblocktool_t::get_latest_committed_lightunit(m_blockstore.get(), sys_contract_rec_elect_rec_addr);
-    base::xauto_ptr<base::xvbstate_t> bstate = base::xvchain_t::instance().get_xstatestore()->get_blkstate_store()->get_block_state(latest_vblock.get());
-    if (bstate == nullptr) {
-        xerror("xtop_application::is_beacon_account fail-get state.");
+        std::string result;
+        auto latest_vblock = data::xblocktool_t::get_latest_committed_lightunit(m_blockstore.get(), sys_contract_rec_elect_rec_addr);
+        base::xauto_ptr<base::xvbstate_t> bstate = base::xvchain_t::instance().get_xstatestore()->get_blkstate_store()->get_block_state(latest_vblock.get(), metrics::statestore_access_from_application_isbeacon);
+        if (bstate == nullptr) {
+            xerror("xtop_application::is_beacon_account fail-get state.");
+            return false;
+        }
+        xunit_bstate_t unitstate(bstate.get());
+
+        auto property_names = data::election::get_property_name_by_addr(common::xaccount_address_t{ sys_contract_rec_elect_rec_addr });
+        common::xnetwork_id_t network_id{ top::config::to_chainid(XGET_CONFIG(chain_name)) };
+        for (auto const & property : property_names) {
+            if (false == unitstate.string_get(property, result) || result.empty()) {
+                xwarn("xtop_application::is_beacon_account no property %s", property.c_str());
+                continue;
+            }
+            using top::data::election::xelection_result_store_t;
+            auto const & election_result_store = codec::msgpack_decode<xelection_result_store_t>({ std::begin(result), std::end(result) });
+            auto & current_group_nodes = election_result_store.result_of(network_id)
+                                                              .result_of(common::xnode_type_t::committee)
+                                                              .result_of(common::xcommittee_cluster_id)
+                                                              .result_of(common::xcommittee_group_id);
+
+            if (top::get<bool>(current_group_nodes.find(node_id))) {
+                xinfo("xtop_application::is_beacon_account is genesis node. %s", node_id.c_str());
+                return true;
+            }
+        }
+
+        xwarn("xtop_application::is_beacon_account not genesis %s", node_id.c_str());
+        return false;
+    } catch (top::error::xtop_error_t const & eh) {
+        std::cerr << "application start failed. exception: " << eh.what() << "; error: " << eh.code().message() << "; category: " << eh.code().category().name() << std::endl;
+        xerror("xapplication_t::is_beacon_account failed with exception: %s; error: %s; category: %s", eh.what(), eh.code().message().c_str(), eh.code().category().name());
+        return false;
+    } catch (std::exception & eh) {
+        std::cerr << "application start failed. exception: " << eh.what() << std::endl;
+        xerror("xapplication_t::is_beacon_account failed with exception: %s", eh.what());
         return false;
     }
-    xunit_bstate_t unitstate(bstate.get());
-
-    auto property_names = data::election::get_property_name_by_addr(common::xaccount_address_t{sys_contract_rec_elect_rec_addr});
-    common::xnetwork_id_t network_id{top::config::to_chainid(XGET_CONFIG(chain_name))};
-    for (auto const & property : property_names) {
-        if (false == unitstate.string_get(property, result) || result.empty()) {
-            xwarn("xtop_application::is_beacon_account no property %s", property.c_str());
-            continue;
-        }
-        using top::data::election::xelection_result_store_t;
-        auto const & election_result_store = codec::msgpack_decode<xelection_result_store_t>({std::begin(result), std::end(result)});
-        auto & current_group_nodes = election_result_store.result_of(network_id)
-                                         .result_of(common::xnode_type_t::committee)
-                                         .result_of(common::xcommittee_cluster_id)
-                                         .result_of(common::xcommittee_group_id);
-
-        if (top::get<bool>(current_group_nodes.find(node_id))) {
-            xinfo("xtop_application::is_beacon_account is genesis node. %s", node_id.c_str());
-            return true;
-        }
-    }
-
-    xwarn("xtop_application::is_beacon_account not genesis %s", node_id.c_str());
-    return false;
 }
 
 NS_END2

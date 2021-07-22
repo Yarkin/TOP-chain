@@ -23,8 +23,6 @@ namespace top { namespace store {
 
 using data::xtransaction_result_t;
 
-#define HASH_POINTERS_KEY   "_haskpt_key_"
-
 const uint16_t MIN_VOTE_LOCK_DAYS = 30;
 const uint16_t MAX_VOTE_LOCK_DAYS = 570;
 const uint64_t AMPLIFY_FACTOR = 1e6;
@@ -33,16 +31,14 @@ const uint64_t EXP_BASE = 104 * 1e4;
 
 class xaccount_context_t {
  public:
+    xaccount_context_t(const xaccount_ptr_t & unitstate);
     xaccount_context_t(const xaccount_ptr_t & unitstate, xstore_face_t* store);
     virtual ~xaccount_context_t();
 
     const xaccount_ptr_t & get_blockchain() const {return m_account; }
     std::string const & get_address() const noexcept {return m_account->get_account();}
-    xstore_face_t* get_store() const noexcept {return m_store;}
     bool    get_transaction_result(xtransaction_result_t& result);
-    void    update_succ_tx_info();
-    void    save_succ_result();
-    void    revert_to_last_succ_result();
+    bool    finish_exec_all_txs(const std::vector<xcons_transaction_ptr_t> & txs);
     size_t  get_op_records_size() const;
     const std::vector<xcons_transaction_ptr_t> & get_create_txs() const {return m_contract_txs;}
 
@@ -83,9 +79,6 @@ class xaccount_context_t {
 
     int32_t  update_disk(uint64_t);
 
-    uint64_t get_tgas_limit();
-    void     set_tgas_limit(uint64_t tgas_limit) { m_tgas_limit = tgas_limit;}
-
     int32_t other_balance_to_available_balance(const std::string & property_name, base::vtoken_t token);
     int32_t available_balance_to_other_balance(const std::string & property_name, base::vtoken_t token);
 
@@ -97,13 +90,10 @@ class xaccount_context_t {
     int32_t merge_pledge_vote_property();
     int32_t insert_pledge_vote_property(xaction_pledge_token_vote& action);
     int32_t redeem_pledge_vote_property(uint64_t num);
-    uint64_t get_top_by_vote(uint64_t vote_num, uint16_t duration) const ;
+    static uint64_t get_top_by_vote(uint64_t vote_num, uint16_t duration);
 
     void deserilize_vote(const std::string& str, uint64_t& vote_num, uint16_t& duration, uint64_t& lock_time);
     std::string serilize_vote(uint64_t vote_num, uint16_t duration, uint64_t lock_time);
-
-    int32_t set_contract_code(const std::string &code);
-    int32_t get_contract_code(std::string &code);
 
     xstring_ptr_t string_read_get(const std::string& prop_name, int32_t & error_code);
     xstrdeque_ptr_t deque_read_get(const std::string& prop_name, int32_t & error_code);
@@ -149,19 +139,19 @@ class xaccount_context_t {
     int32_t generate_tx(const std::string& target_addr, const std::string& func_name, const std::string& func_param);
     int32_t check_create_property(const std::string& key);
 
-    int32_t set_contract_sub_account(const std::string& value);
-    int32_t set_contract_parent_account(const uint64_t amount, const std::string& value);
-    int32_t sub_contract_sub_account_check(const std::string& value);
-
-    int32_t get_parent_account(std::string &value);
-
     void set_source_pay_info(const data::xaction_asset_out& source_pay_info);
     const data::xaction_asset_out& get_source_pay_info();
 
     data::xblock_t*
     get_block_by_height(const std::string & owner, uint64_t height) const;
+    data::xblock_t*
+    get_next_full_block(const std::string & owner, const uint64_t cur_full_height) const;
 
     uint64_t get_blockchain_height(const std::string & owner) const;
+
+    int64_t get_tgas_balance_change() const { return m_tgas_balance_change; }
+    void add_tgas_balance_change(uint64_t amount) { m_tgas_balance_change += amount; }
+    void sub_tgas_balance_change(uint64_t amount) { m_tgas_balance_change -= amount; }
 
  private:
     const xobject_ptr_t<base::xvbstate_t> & get_bstate() const;
@@ -175,7 +165,8 @@ class xaccount_context_t {
     void    set_tx_info_latest_sendtx_num(uint64_t num);
     void    set_tx_info_latest_sendtx_hash(const std::string & hash);
     void    set_tx_info_recvtx_num(uint64_t num);
-    void    get_latest_sendtx_nonce_hash(uint64_t & nonce, uint256_t & hash);
+    void    get_latest_create_nonce_hash(uint64_t & nonce, uint256_t & hash);
+    void    update_latest_create_nonce_hash(const xcons_transaction_ptr_t & tx);
     void    set_account_create_time();
 
  public:
@@ -187,8 +178,13 @@ class xaccount_context_t {
  private:
     xstore_face_t*      m_store;
     xaccount_ptr_t      m_account{nullptr};
+    uint64_t            m_latest_exec_sendtx_nonce{0};  // for exec tx
+    uint256_t           m_latest_exec_sendtx_hash;
+    uint64_t            m_latest_create_sendtx_nonce{0};  // for contract create tx
+    uint256_t           m_latest_create_sendtx_hash;
+
     xobject_ptr_t<base::xvcanvas_t>     m_canvas{nullptr};
-    xcons_transaction_ptr_t  m_currect_transaction;
+    xcons_transaction_ptr_t             m_currect_transaction{nullptr};
     std::vector<xcons_transaction_ptr_t> m_contract_txs;
 
     std::string         m_origin_state_bin;
@@ -199,6 +195,7 @@ class xaccount_context_t {
     uint64_t            m_timestamp{0};
     uint64_t            m_timer_height{0};
     uint64_t            m_tgas_limit{0};
+    int64_t             m_tgas_balance_change{0};
     std::string         m_random_seed;
     uint64_t            m_sys_total_lock_tgas_token{0};
 

@@ -24,10 +24,16 @@ xworkpool_dispatcher::~xworkpool_dispatcher() {
     xassert(m_packers.empty());
 }
 
-int16_t xworkpool_dispatcher::get_thread_index(base::xworkerpool_t * pool, uint16_t table_id) {
+int16_t xworkpool_dispatcher::get_thread_index(base::xworkerpool_t * pool, table_index& table_id) {
     auto pool_size = pool->get_count();
-    auto pool_index = table_id % pool_size;
-    return pool_index;
+    if (table_id.zone_index == base::enum_chain_zone_beacon_index || table_id.zone_index == base::enum_chain_zone_zec_index) {
+        // zec & rec always dispatch to thread 0
+        return 0;
+    } else {
+        // other table will dispatch to other thread
+        auto pool_index = table_id.table_id % (pool_size - 1);
+        return pool_index + 1;
+    }
 }
 
 bool xworkpool_dispatcher::dispatch(base::xworkerpool_t * pool, base::xcspdu_t * pdu, const xvip2_t & xip_from, const xvip2_t & xip_to) {
@@ -49,7 +55,7 @@ bool xworkpool_dispatcher::dispatch(base::xworkerpool_t * pool, base::xcspdu_t *
         } else {
             xunit_warn("xworkpool_dispatcher::dispatch fail. pdu=%s,table id %d failed packer %p with invalid xip to: %s vs packer: %s, account %s",
                 pdu->dump().c_str(),
-                table_id,
+                table_id.table_id,
                 packer,
                 xcons_utl::xip_to_hex(xip_to).c_str(),
                 xcons_utl::xip_to_hex(packer_xip).c_str(),
@@ -63,7 +69,7 @@ void xworkpool_dispatcher::chain_timer(common::xlogic_time_t time) {
     assert(m_para);
 
     auto * blkstore = m_para->get_resources()->get_vblockstore();
-    auto timer_block = blkstore->get_latest_cert_block(base::xvaccount_t(sys_contract_beacon_timer_addr));
+    auto timer_block = blkstore->get_latest_cert_block(base::xvaccount_t(sys_contract_beacon_timer_addr), metrics::blockstore_access_from_us_dispatcher_load_tc);
 
     xunit_dbg("xworkpool_dispatcher::chain_timer call on_clock, logic time %" PRIu64 " TC %" PRIu64, time, timer_block->get_height());
     if (time <= timer_block->get_height()) {
@@ -72,25 +78,27 @@ void xworkpool_dispatcher::chain_timer(common::xlogic_time_t time) {
 }
 
 void xworkpool_dispatcher::on_clock(base::xvblock_t * clock_block) {
+    auto work_pool = m_para->get_resources()->get_workpool();
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
         for (auto const & pair : m_packers) {
-            fire_clock(clock_block, pair.second);
+            auto table_index = pair.first;
+            auto worker = get_worker(work_pool, table_index);
+            fire_clock(clock_block, worker, pair.second);
         }
     }
 }
 
-std::string xworkpool_dispatcher::account(uint16_t tableid, const xvip2_t & xip) {
-    auto zoneid = get_zone_id_from_xip2(xip);
-    return data::xblocktool_t::make_address_table_account((base::enum_xchain_zone_index)zoneid, tableid);
+std::string xworkpool_dispatcher::account(table_index & tableid) {
+    return data::xblocktool_t::make_address_table_account(tableid.zone_index, tableid.table_id);
 }
 
-uint16_t xworkpool_dispatcher::get_tableid(const std::string & account) {
+table_index xworkpool_dispatcher::get_tableid(const std::string & account) {
     auto     xid1 = base::xvaccount_t::get_xid_from_account(account);
-    uint8_t  zone1 = get_vledger_zone_index(xid1);
-    uint16_t subaddr1 = get_vledger_subaddr(xid1);
-    return subaddr1;
+    base::enum_xchain_zone_index  zone1 = (base::enum_xchain_zone_index)get_vledger_zone_index(xid1);
+    uint16_t table_id = get_vledger_subaddr(xid1);
+    return {zone1, table_id};
 }
 
 std::string watcher_name(const xvip2_t & xip) {
@@ -106,7 +114,7 @@ bool xworkpool_dispatcher::start(const xvip2_t & xip, const common::xlogic_time_
     auto election_face = m_para->get_resources()->get_election();
     auto elect_face = election_face->get_election_cache_face();
     if (elect_face != nullptr) {
-        std::vector<uint16_t> tables;
+        std::vector<table_index> tables;
         elect_face->get_tables(xip, &tables);
         subscribe(tables, xip, start_time);
     }
@@ -130,33 +138,10 @@ bool xworkpool_dispatcher::destroy(const xvip2_t & xip) {
     }
     m_packers.clear();
     return true;
-
-    // auto election_face = m_para->get_resources()->get_election();
-    // auto elect_face = election_face->get_election_cache_face();
-    // xassert(elect_face != nullptr);
-    // if (elect_face != nullptr) {
-    //     std::vector<uint16_t> tables;
-    //     elect_face->get_tables(xip, &tables);
-    //     {
-    //         std::lock_guard<std::mutex> lock(m_mutex);
-    //         for (size_t index = 0; index < tables.size(); index++) {
-    //             // get account info
-    //             auto table_id = tables[index];
-    //             auto iter = m_packers.find(table_id);
-    //             if (iter != m_packers.end()) {
-    //                 iter->second->destroy();
-    //                 m_packers.erase(iter);
-    //             }
-    //         }
-    //     }
-    //     return true;
-    // }
-    // return false;
 }
 
-bool xworkpool_dispatcher::subscribe(const std::vector<uint16_t> & tables, const xvip2_t & xip, const common::xlogic_time_t& start_time) {
+bool xworkpool_dispatcher::subscribe(const std::vector<table_index> & tables, const xvip2_t & xip, const common::xlogic_time_t& start_time) {
     auto           pool = m_para->get_resources()->get_workpool();
-    auto           pool_size = pool->get_count();
     auto           pool_thread_ids = pool->get_thread_ids();
     xbatch_packers reset_packers;
     {
@@ -168,14 +153,14 @@ bool xworkpool_dispatcher::subscribe(const std::vector<uint16_t> & tables, const
             if (iter == m_packers.end()) {
                 auto pool_index = get_thread_index(pool, table_id);
                 auto thread_id = pool_thread_ids[pool_index];
-                auto account_id = account(table_id, xip);
+                auto account_id = account(table_id);
 
                 // build packer and push to container
                 auto packer_ptr = make_object_ptr<xbatch_packer>(m_mbus, table_id, account_id, m_para, m_blockmaker, base::xcontext_t::instance(), thread_id);
                 // packer_ptr->reset_xip_addr(xip);
                 m_packers[table_id] = packer_ptr;
                 reset_packers.push_back(packer_ptr);
-                xunit_dbg("[xunitservice] subscribe %s %d @ %s %p", account_id.c_str(), table_id, xcons_utl::xip_to_hex(xip).c_str(), this);
+                xunit_dbg("[xunitservice] subscribe %s %d @ %s %p", account_id.c_str(), table_id.table_id, xcons_utl::xip_to_hex(xip).c_str(), this);
             } else {
                 // iter->second->reset_xip_addr(xip);
                 reset_packers.push_back(iter->second);
@@ -200,13 +185,13 @@ bool xworkpool_dispatcher::subscribe(const std::vector<uint16_t> & tables, const
     return true;
 }
 
-base::xworker_t * xworkpool_dispatcher::get_worker(base::xworkerpool_t * pool, uint16_t table_id) {
+base::xworker_t * xworkpool_dispatcher::get_worker(base::xworkerpool_t * pool, table_index & table_id) {
     auto pool_index = get_thread_index(pool, table_id);
-    auto pool_thread_ids = pool->get_thread_ids();
+//    auto pool_thread_ids = pool->get_thread_ids();
     return pool->get_thread(pool_index);
 }
 
-void xworkpool_dispatcher::fire_clock(base::xvblock_t * block, xbatch_packer_ptr_t packer) {
+void xworkpool_dispatcher::fire_clock(base::xvblock_t * block, base::xworker_t * worker, xbatch_packer_ptr_t packer) {
     auto _call = [](base::xcall_t & call, const int32_t cur_thread_id, const uint64_t timenow_ms) -> bool {
         auto packer = dynamic_cast<xbatch_packer *>(call.get_param1().get_object());
         auto block_ptr = dynamic_cast<base::xvblock_t *>(call.get_param2().get_object());
@@ -214,7 +199,7 @@ void xworkpool_dispatcher::fire_clock(base::xvblock_t * block, xbatch_packer_ptr
         return true;
     };
     base::xcall_t asyn_call((base::xcallback_t)_call, packer.get(), block);
-    packer->send_call(asyn_call);
+    worker->send_call(asyn_call);
 }
 
 NS_END2

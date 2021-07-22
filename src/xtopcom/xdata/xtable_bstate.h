@@ -9,7 +9,6 @@
 #include "xvledger/xvstate.h"
 #include "xvledger/xdataobj_base.hpp"
 #include "xvledger/xaccountindex.h"
-#include "xvledger/xvboffdata.h"
 #include "xvledger/xreceiptid.h"
 
 NS_BEG2(top, data)
@@ -35,9 +34,11 @@ class xtable_bstate_t {
 
  public:
     bool                    get_account_index(const std::string & account, base::xaccount_index_t & account_index) const;
+    std::set<std::string>   get_all_accounts() const;
     std::set<std::string>   get_unconfirmed_accounts() const;
     int32_t                 get_account_size() const;
     bool                    find_receiptid_pair(base::xtable_shortid_t sid, base::xreceiptid_pair_t & pair) const;
+    uint32_t                get_unconfirm_tx_num() const {return m_cache_receiptid->get_unconfirm_tx_num();}
     const base::xreceiptid_state_ptr_t & get_receiptid_state() const {return m_cache_receiptid;}
 
  public:

@@ -69,11 +69,11 @@ xtop_cluster_address::xtop_cluster_address(xnetwork_id_t const & network_id,
                                            xcluster_id_t const & cluster_id,
                                            xgroup_id_t const & group_id)
     : m_xip{ network_id, zone_id, cluster_id, group_id } {
-    if (group_id.has_value() && group_id != xbroadcast_id_t::group) {
+    if (group_id != xbroadcast_id_t::group) {
         m_type = xnode_type_t::group | node_type_from(zone_id, cluster_id, group_id);
-    } else if (cluster_id.has_value() && cluster_id != xbroadcast_id_t::cluster) {
+    } else if (cluster_id != xbroadcast_id_t::cluster) {
         m_type = xnode_type_t::cluster | node_type_from(zone_id, cluster_id);
-    } else if (zone_id.has_value() && zone_id != xbroadcast_id_t::zone) {
+    } else if (zone_id != xbroadcast_id_t::zone) {
         m_type = xnode_type_t::zone | node_type_from(zone_id);
     } else {
         m_type = xnode_type_t::network;
@@ -602,8 +602,7 @@ xtop_node_address::xip2() const noexcept {
         sharding_xip.zone_id(),
         sharding_xip.cluster_id(),
         sharding_xip.group_id(),
-        xslot_id_t{ m_account_election_address.slot_id().value_or(xbroadcast_slot_id_value) },
-        // xnetwork_version_t{ static_cast<xnetwork_version_t::value_type>(version().value_or(xdefault_network_version_value)) },
+        m_account_election_address.slot_id(),
         sharding_size(),
         associated_blk_height()
     };
@@ -738,12 +737,12 @@ build_edge_sharding_address(xnetwork_id_t const & network_id) {
 }
 
 xsharding_address_t
-build_archive_sharding_address(xnetwork_id_t const & network_id) {
+build_archive_sharding_address(xgroup_id_t const & group_id, xnetwork_id_t const & network_id) {
     return xsharding_address_t{
         network_id,
         xarchive_zone_id,
         xdefault_cluster_id,
-        xdefault_group_id
+        group_id
     };
 }
 
@@ -779,6 +778,32 @@ build_frozen_sharding_address(xnetwork_id_t const & network_id, xcluster_id_t co
         cluster_id,
         group_id
     };
+}
+
+xgroup_address_t build_edge_archive_group_address(xnetwork_id_t const & network_id) {
+    return xgroup_address_t{
+        network_id,
+        xarchive_zone_id,
+        xdefault_cluster_id,
+        xgroup_id_t{xdefault_group_id_value + 1}
+    };
+}
+
+xgroup_address_t build_group_address(xnetwork_id_t const & network_id, xnode_type_t const node_type) {
+    switch (node_type) {
+    case xnode_type_t::rec:
+        return build_committee_sharding_address(network_id);
+
+    case xnode_type_t::zec:
+        return build_zec_sharding_address(network_id);
+
+    case xnode_type_t::edge:
+        return build_edge_sharding_address(network_id);
+
+    default:
+        assert(false);
+        return {};
+    }
 }
 
 NS_END2

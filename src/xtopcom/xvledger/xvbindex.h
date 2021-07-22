@@ -6,6 +6,10 @@
 
 #include "xvblock.h"
 
+#ifndef STORE_UNIT_BLOCK
+#define STORE_UNIT_BLOCK
+#endif
+
 //index of block
 namespace top
 {
@@ -45,6 +49,7 @@ namespace top
         public:
             inline const uint64_t       get_height()  const {return m_block_height;}
             inline const uint64_t       get_viewid()  const {return m_block_viewid;}
+            inline const uint64_t       get_viewtoken()  const {return m_block_viewtoken;}
             inline const std::string &  get_block_hash()      const {return m_block_hash;}
             inline const std::string &  get_last_block_hash() const {return m_last_block_hash;}
             inline const std::string &  get_last_full_block_hash()    const {return m_last_fullblock_hash;}
@@ -53,10 +58,17 @@ namespace top
             inline const int32_t        get_next_viewid_offset() const {return m_next_viewid_offset;}
             inline const uint64_t       get_next_viewid()  const {return (m_block_viewid + m_next_viewid_offset);}
 
-            inline const xvid_t         get_parent_account_id()   const {return m_parent_account_id;}
+            inline const uint64_t       get_parent_accountid()    const {return m_parent_accountid;}
             inline const uint64_t       get_parent_block_height() const {return m_parent_block_height;}
-            inline const uint64_t       get_parent_view_id()      const {return m_parent_view_id;}
-            inline const int            get_entityid_at_parent()  const {return m_entityid_at_parent;}
+            inline const uint64_t       get_parent_block_viewid() const {return m_parent_block_viewid;}
+            inline const uint32_t       get_parent_block_entity() const {return m_parent_block_entity_id;}
+#ifdef STORE_UNIT_BLOCK           
+            inline bool                 has_parent_store() const {return false;}
+#else 
+            inline bool                 has_parent_store() const {return m_parent_accountid != 0 && m_parent_block_height != 0 && m_parent_block_viewid != 0;}
+#endif
+            inline const std::string &  get_extend_cert()      const {return m_extend_cert;}
+            inline const std::string &  get_extend_data()      const {return m_extend_data;}
 
             inline enum_xvblock_level   get_block_level()  const {return xvheader_t::cal_block_level(m_block_types);}
             inline enum_xvblock_class   get_block_class()  const {return xvheader_t::cal_block_class(m_block_types);}
@@ -119,15 +131,18 @@ namespace top
         private: //serialized from/to stream/db
             uint64_t        m_block_height;     //block 'height
             uint64_t        m_block_viewid;     //view#id associated this block
+            uint64_t        m_block_viewtoken;  //view token associated this block
             std::string     m_block_hash;       //point to block'qcert hash that logicaly same as block hash
             std::string     m_last_block_hash;  //point the last block'hash
             std::string     m_last_fullblock_hash; //point to last full-block'hash
             uint64_t        m_last_fullblock_height;//height of m_last_full_block
             
-            uint64_t        m_parent_account_id;  //container(e.g.tableblock)'account id(refer xvaccount_t::get_xvid())
+            uint64_t        m_parent_accountid;   //container(e.g.tableblock)'account id(refer xvaccount_t::get_xvid())
             uint64_t        m_parent_block_height;//height of container(e.gtableblock) that may carry this block
-            uint64_t        m_parent_view_id;     //viewid of container(e.gtableblock) that may carry this block
-            uint16_t        m_entityid_at_parent; //entityid of under parent 'block(e.g tableblock)
+            uint64_t        m_parent_block_viewid;//viewid of container(e.gtableblock) that may carry this block
+            uint32_t        m_parent_block_entity_id{0};//entity id at parent block
+            std::string     m_extend_cert;
+            std::string     m_extend_data;
             
             uint16_t        m_combineflags;     //[8bit:block-flags][1bit][7bit:store-bits]
             //[1][enum_xvblock_class][enum_xvblock_level][enum_xvblock_type][enum_xvblock_reserved]
@@ -137,6 +152,7 @@ namespace top
             
             //(m_block_viewid + m_next_viewid_offset)point the block at same height but different viewid
             int32_t         m_next_viewid_offset;
+            std::string     m_reserved;  //for future
         };
 
         class xvbindex_vector
@@ -201,6 +217,7 @@ namespace top
             inline xvbnode_t*          get_child()   const {return m_child_node;}
 
             inline uint64_t            get_viewid()  const {return m_block->get_viewid();}
+            inline uint64_t            get_viewtoken() const {return m_block->get_viewtoken();}
             inline uint64_t            get_height()  const {return m_block->get_height();}
             inline uint32_t            get_chainid() const {return m_block->get_chainid();}
             inline const std::string&  get_account() const {return m_block->get_account();}

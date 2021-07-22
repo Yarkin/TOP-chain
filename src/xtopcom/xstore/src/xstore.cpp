@@ -34,6 +34,7 @@
 #include "xstore/xaccount_context.h"
 #include "xstore/xstore.h"
 #include "xstore/xstore_error.h"
+#include "xstore/xstore_util.h"
 
 #include "xdata/xgenesis_data.h"
 
@@ -50,6 +51,7 @@ xstore::xstore(const std::shared_ptr<db::xdb_face_t> &db)
 
 xaccount_ptr_t xstore::query_account(const std::string &address) const {
     base::xvaccount_t _vaddr(address);
+    XMETRICS_GAUGE(metrics::blockstore_access_from_store, 1);
     auto _block = base::xvchain_t::instance().get_xblockstore()->get_latest_connected_block(_vaddr);
     if (_block == nullptr) {
         xerror("xstore::query_account fail-load latest connectted block. account=%s", address.c_str());
@@ -61,7 +63,7 @@ xaccount_ptr_t xstore::query_account(const std::string &address) const {
         return nullptr;
     }
 
-    base::xauto_ptr<base::xvbstate_t> bstate = base::xvchain_t::instance().get_xstatestore()->get_blkstate_store()->get_block_state(_block.get());
+    base::xauto_ptr<base::xvbstate_t> bstate = base::xvchain_t::instance().get_xstatestore()->get_blkstate_store()->get_block_state(_block.get(), metrics::statestore_access_from_vnodesrv_load_state);
     if (bstate != nullptr) {
         xaccount_ptr_t account = std::make_shared<xunit_bstate_t>(bstate.get());
         return account;
@@ -155,7 +157,7 @@ xaccount_ptr_t xstore::get_target_state(base::xvblock_t* block) const {
     const std::string & address = block->get_account();
     base::xvaccount_t _vaddr(address);
     base::xvblkstatestore_t* blkstatestore = base::xvchain_t::instance().get_xstatestore()->get_blkstate_store();
-    base::xauto_ptr<base::xvbstate_t> bstate = blkstatestore->get_block_state(block);
+    base::xauto_ptr<base::xvbstate_t> bstate = blkstatestore->get_block_state(block, metrics::statestore_access_from_vnodesrv_load_state);
     if (bstate == nullptr) {
         xwarn("xstore::get_target_state fail-load state.block=%s", block->dump().c_str());
         return nullptr;
@@ -178,7 +180,8 @@ bool xstore::string_property_get(base::xvblock_t* block, const std::string& prop
 
 xaccount_ptr_t xstore::get_target_state(const std::string &address, uint64_t height) const {
     base::xvaccount_t _vaddr(address);
-    base::xauto_ptr<base::xvblock_t> _block = base::xvchain_t::instance().get_xblockstore()->load_block_object(_vaddr, height, base::enum_xvblock_flag_committed, true);
+    XMETRICS_GAUGE(metrics::blockstore_access_from_store, 1);
+    base::xauto_ptr<base::xvblock_t> _block = base::xvchain_t::instance().get_xblockstore()->load_block_object(_vaddr, height, base::enum_xvblock_flag_committed, false);
     if (_block == nullptr) {
         xwarn("xstore::get_target_state load block fail.account=%s,height=%ld", address.c_str(), height);
         return nullptr;
@@ -261,14 +264,19 @@ bool xstore::delete_block_by_path(const std::string & store_path,const std::stri
 }
 
 bool xstore::set_value(const std::string &key, const std::string &value) {
+    XMETRICS_GAUGE(metrics::store_db_write, 1);
+    xstore_util::metirc_key_value(key, value, true);
     return m_db->write(key, value);
 }
 
 bool xstore::delete_value(const std::string &key) {
+    XMETRICS_GAUGE(metrics::store_db_delete, 1);
+    xstore_util::metirc_key_value(key, get_value(key), false);
     return m_db->erase(key);
 }
 
 const std::string xstore::get_value(const std::string &key) const {
+    XMETRICS_GAUGE(metrics::store_db_read, 1);
     std::string value;
 
     bool success = m_db->read(key, value);
@@ -285,7 +293,7 @@ bool  xstore::find_values(const std::string & key,std::vector<std::string> & val
 }
 
 bool  xstore::execute_block(base::xvblock_t* vblock) {
-    return base::xvchain_t::instance().get_xstatestore()->get_blkstate_store()->execute_block(vblock);
+    return base::xvchain_t::instance().get_xstatestore()->get_blkstate_store()->execute_block(vblock, metrics::statestore_access_from_vnodesrv_load_state);
 }
 
 } // namespace store

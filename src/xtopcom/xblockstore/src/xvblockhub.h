@@ -111,9 +111,12 @@ namespace top
             uint64_t  _lowest_genesis_connect_height;  //[_lowest_genesis_connect_height,_highest_genesis_connect_height]
             uint64_t  _highest_genesis_connect_height;//indicated the last block who is connected to genesis block
             std::string _highest_genesis_connect_hash;
-            uint64_t _highest_sync_height;          // higest continous block started from highest full table block
+            uint64_t _highest_sync_height;           // higest continous block started from highest full table block
+
+            uint16_t  _reserved_u16;      //reserved for future
+            uint8_t   _block_level;       //set per block 'enum_xvblock_level,each account has unique level
         private:
-             uint8_t   _meta_spec_version; //add version control for compatible case
+            uint8_t   _meta_spec_version; //add version control for compatible case
         };
 
         //each account has own virtual store
@@ -123,8 +126,12 @@ namespace top
             enum{enum_max_cached_blocks = 32};
         public:
             static std::string  get_meta_path(base::xvaccount_t & _account);
+            uint64_t            get_latest_committed_block_height() const { return m_meta->_highest_commit_block_height; }
+            uint64_t            get_latest_connected_block_height() const { return m_meta->_highest_connect_block_height; }
+            uint64_t            get_latest_genesis_connected_block_height() const { return m_meta->_highest_genesis_connect_height; }
+            uint64_t            get_latest_executed_block_height() const { return m_meta->_highest_execute_block_height; }
         public:
-            xblockacct_t(const std::string & account_addr,const uint64_t timeout_ms,const std::string & blockstore_path);
+            xblockacct_t(const std::string & account_addr,const uint64_t timeout_ms,const std::string & blockstore_path,base::xvdbstore_t* xvdb_ptr);
         protected:
             virtual ~xblockacct_t();
         private:
@@ -138,8 +145,10 @@ namespace top
             virtual bool           close(bool force_async = true) override;
             virtual bool           is_live(const uint64_t timenow_ms) override;//test whether has been idel status
             virtual std::string    dump() const override;  //just for debug purpose
-            bool                   clean_caches(bool clean_all); //clean unsed caches of account to recall memory
+            const int              get_max_cache_size() const;
+            bool                   clean_caches(bool clean_all,bool force_release_unused_block); //clean unsed caches of account to recall memory
             bool                   save_meta();
+            base::xvdbstore_t*     get_xdbstore();
 
             inline const uint64_t  get_idle_duration()    const {return m_idle_timeout_ms;}
             inline const uint64_t  get_last_access_time() const {return m_last_access_time_ms;} //UTC ms
@@ -147,10 +156,12 @@ namespace top
             //clean all cached blocks after reach max idle duration(as default it is 60 seconds)
             bool                   reset_cache_timeout(const uint32_t max_idle_time_ms);
             const int              get_cache_size();
-
+            inline int             get_block_level() const {return m_meta->_block_level;}
             inline const std::string &   get_blockstore_path()   const {return m_blockstore_path;};
 
-            bool                   process_events();
+            const std::deque<xblockevent_t> move_events(); //move /transfer all events to outside
+            bool                            process_events();
+            bool                            process_events(const std::deque<xblockevent_t> & events);
 
         public://just search at cache layer
             std::vector<base::xvbindex_t*>  query_index(const uint64_t height);
@@ -179,15 +190,14 @@ namespace top
             bool                   load_latest_index_list(base::xvbindex_t* & cert_block,base::xvbindex_t* & lock_block,base::xvbindex_t* & commit_block);     //latest commit/lock/cert
 
             int                    load_index(const uint64_t target_height);//return how many index at height
-            base::xvbindex_t*      load_index(const uint64_t target_height,const uint64_t view_id);
-            base::xvbindex_t*      load_index(const uint64_t target_height,const std::string & block_hash);
-            base::xvbindex_t*      load_index(const uint64_t target_height,base::enum_xvblock_flag request_flag);
+            base::xvbindex_t*      load_index(const uint64_t target_height,const uint64_t view_id, const int atag = 0);
+            base::xvbindex_t*      load_index(const uint64_t target_height,const std::string & block_hash, const int atag = 0);
+            base::xvbindex_t*      load_index(const uint64_t target_height,base::enum_xvblock_flag request_flag, const int atag = 0);
             std::vector<base::xvbindex_t*>  load_indexes(const uint64_t target_height);//load indexes from db for height
 
-            bool                   load_block_object(base::xvbindex_t* index_ptr);
+            bool                   load_block_object(base::xvbindex_t* index_ptr, const int atag = 0);
             bool                   load_index_input(base::xvbindex_t* target_block);
             bool                   load_index_output(base::xvbindex_t* target_block);
-            bool                   load_index_offdata(base::xvbindex_t* target_block);
             size_t                 load_index_by_height(const uint64_t target_height);
             bool                   delete_block_from_db(base::xvbindex_t* index_ptr);
 
@@ -198,7 +208,6 @@ namespace top
             bool                   delete_block(const uint64_t target_height);//return error code indicate what is result
             bool                   load_block_input(base::xvblock_t* target_block);
             bool                   load_block_output(base::xvblock_t* target_block);
-            bool                   load_block_offdata(base::xvblock_t* target_block);
             bool                   load_block_flags(base::xvblock_t* target_block);//update block'flags
 
             bool                   execute_block(base::xvblock_t* block_ptr); //execute block and update state of acccount
@@ -240,10 +249,6 @@ namespace top
             bool                read_block_output_from_db(base::xvbindex_t* index_ptr);
             bool                read_block_output_from_db(base::xvblock_t * block_ptr);
 
-            //manage data related xvboffdata_t
-            bool                write_block_offdata_to_db(base::xvbindex_t* index_ptr,base::xvblock_t * block_ptr);
-            bool                read_block_offdata_from_db(base::xvblock_t * block_ptr);
-
             bool                write_index_to_db(const uint64_t target_height);
             bool                write_index_to_db(std::map<uint64_t,base::xvbindex_t*> & indexes);
             bool                write_index_to_db(base::xvbindex_t* index_obj);
@@ -276,6 +281,7 @@ namespace top
             std::string     m_last_save_vmeta_bin;
         protected:
             xacctmeta_t *   m_meta;
+            base::xvdbstore_t* m_xvdb_ptr;
             std::deque<xblockevent_t> m_events_queue;  //stored event
             std::map<uint64_t,std::map<uint64_t,base::xvbindex_t*> > m_all_blocks;  // < height#, <view#,block*> > sort from lower to higher
         };
@@ -284,7 +290,7 @@ namespace top
         class xchainacct_t : public xblockacct_t
         {
         public:
-            xchainacct_t(const std::string & account_addr,const uint64_t timeout_ms,const std::string & blockstore_path);
+            xchainacct_t(const std::string & account_addr,const uint64_t timeout_ms,const std::string & blockstore_path,base::xvdbstore_t* xvdb_ptr);
         protected:
             virtual ~xchainacct_t();
         private:

@@ -37,17 +37,17 @@ bool xtable_bstate_t::set_block_offsnapshot(base::xvblock_t* block, const std::s
         return false;
     }
 
-    if (block->is_execute_ready()) {
+    if (block->is_full_state_block()) {
         xwarn("xtable_bstate_t::set_block_offsnapshot already has full state. block=%s", block->dump().c_str());
         return true;
     }
 
     std::string binlog_hash = base::xcontext_t::instance().hash(snapshot, block->get_cert()->get_crypto_hash_type());
-    if (binlog_hash != block->get_output()->get_binlog_hash()) {
-        xwarn("xtable_bstate_t::set_block_offsnapshot fail-snapshot hash unmatch.block=%s", block->dump().c_str());
+    if (binlog_hash != block->get_fullstate_hash()) {
+        xerror("xtable_bstate_t::set_block_offsnapshot fail-snapshot hash unmatch.block=%s", block->dump().c_str());
         return false;
     }
-    if (false == block->get_output()->set_offblock_snapshot(snapshot)) {
+    if (false == block->set_offblock_snapshot(snapshot)) {
         xerror("xtable_bstate_t::set_block_offsnapshot set offblock snapshot state. block=%s", block->dump().c_str());
         return false;
     }
@@ -81,6 +81,22 @@ bool xtable_bstate_t::get_account_index(const std::string & account, base::xacco
     }
     account_index.serialize_from(value);
     return true;
+}
+
+std::set<std::string> xtable_bstate_t::get_all_accounts() const {
+    if (false == get_bstate()->find_property(XPROPERTY_TABLE_ACCOUNT_INDEX)) {
+        xwarn("xtable_bstate_t::get_account_index fail-find property.account=%s,height=%ld", get_account().c_str(), get_block_height());
+        return {};
+    }
+    std::set<std::string> all_accounts;
+    auto propobj = get_bstate()->load_string_map_var(XPROPERTY_TABLE_ACCOUNT_INDEX);
+    std::map<std::string,std::string> values = propobj->query();  // TODO(jimmy)
+    for (auto & v : values) {
+        base::xaccount_index_t account_index;
+        account_index.serialize_from(v.second);
+        all_accounts.insert(v.first);
+    }
+    return all_accounts;
 }
 
 std::set<std::string> xtable_bstate_t::get_unconfirmed_accounts() const {
@@ -128,7 +144,7 @@ bool xtable_bstate_t::find_receiptid_pair(base::xtable_shortid_t sid, base::xrec
 }
 
 void xtable_bstate_t::cache_receiptid() {
-    m_cache_receiptid = make_object_ptr<base::xreceiptid_state_t>();
+    m_cache_receiptid = std::make_shared<base::xreceiptid_state_t>();
     if (false == get_bstate()->find_property(XPROPERTY_TABLE_RECEIPTID)) {
         return;
     }
@@ -140,6 +156,7 @@ void xtable_bstate_t::cache_receiptid() {
         pair.serialize_from(v.second);
         m_cache_receiptid->add_pair(sid, pair);
     }
+    m_cache_receiptid->update_unconfirm_tx_num();  // calc and cache unconfirm tx for get performance
 }
 
 bool xtable_bstate_t::set_receiptid_pair(base::xtable_shortid_t sid, const base::xreceiptid_pair_t & pair, base::xvcanvas_t* canvas) {

@@ -19,7 +19,7 @@ NS_BEG2(top, xtxpool_v2)
 class xunconfirmed_tx_comp {
 public:
     bool operator()(const xcons_transaction_ptr_t left, const xcons_transaction_ptr_t right) const {
-        return left->get_unit_cert()->get_gmtime() < right->get_unit_cert()->get_gmtime();
+        return left->get_receipt_gmtime() < right->get_receipt_gmtime();
     }
 };
 
@@ -30,10 +30,12 @@ public:
     void push_tx(const xcons_transaction_ptr_t & tx);
     void erase(uint64_t receipt_id, xall_unconfirm_tx_set_t & all_unconfirm_tx_set);
     const xcons_transaction_ptr_t find(uint64_t receipt_id) const;
-    void update_receipt_id(uint64_t latest_id, xall_unconfirm_tx_set_t & all_unconfirm_tx_set);
+    void update_receipt_id(uint64_t max_confirm_id, xall_unconfirm_tx_set_t & all_unconfirm_tx_set);
+    const xcons_transaction_ptr_t get_latest_receipt() const;
+    const xcons_transaction_ptr_t get_first_receipt() const;
 
 private:
-    uint64_t m_latest_receipt_id{0};
+    uint64_t m_max_confirm_id{0};
     std::map<uint64_t, xcons_transaction_ptr_t> m_unconfirmed_txs;  // key:receipt id, value:transaction
 };
 
@@ -42,10 +44,11 @@ public:
     void push_tx(const xcons_transaction_ptr_t & tx);
     void erase(uint16_t peer_table_sid, uint64_t receipt_id);
     const xcons_transaction_ptr_t find(uint16_t peer_table_sid, uint64_t receipt_id) const;
-    void update_receiptid_state(const xreceipt_state_cache_t & receiptid_state_cache);
+    void update_receiptid_state(const xtable_state_cache_t & table_state_cache);
     const xall_unconfirm_tx_set_t & get_all_txs() const {
         return m_all_unconfirm_txs;
     }
+    const std::vector<xcons_transaction_ptr_t> get_latest_receipts_for_resend(uint64_t now) const;
 
 private:
     std::map<base::xtable_shortid_t, std::shared_ptr<xpeer_table_unconfirmed_txs_t>> m_peer_tables;  // key:peer table sid, value:table with unconfirmed txs
@@ -72,7 +75,7 @@ class xunconfirmed_account_t {
 public:
     xunconfirmed_account_t(xtxpool_resources_face * para, xpeer_tables_t * peer_tables) : m_para(para), m_peer_tables(peer_tables) {
     }
-    int32_t update(xblock_t * latest_committed_block, const xreceipt_state_cache_t & receiptid_state_cache);
+    int32_t update(xblock_t * latest_committed_block, const xtable_state_cache_t & table_state_cache);
     const xcons_transaction_ptr_t find(const uint256_t & hash) const;
     uint32_t size() const {
         return m_unconfirmed_txs.size();
@@ -106,12 +109,14 @@ public:
     ~xunconfirmed_tx_queue_t();
 
 public:
-    void udpate_latest_confirmed_block(xblock_t * block, const xreceipt_state_cache_t & receiptid_state_cache);
-    void recover(const xreceipt_state_cache_t & receiptid_state_cache);
+    void udpate_latest_confirmed_block(xblock_t * block, const xtable_state_cache_t & table_state_cache);
+    void recover(const xtable_state_cache_t & table_state_cache, const xtablestate_ptr_t & tablestate);
     const xcons_transaction_ptr_t find(const std::string & account_addr, const uint256_t & hash) const;
     const std::vector<xcons_transaction_ptr_t> get_resend_txs(uint64_t now);
     uint32_t size() const;
     uint64_t find_account_cache_height(const std::string & account_addr) const;
+    xcons_transaction_ptr_t get_unconfirmed_tx(const std::string & to_table_addr, uint64_t receipt_id) const;
+    xcons_transaction_ptr_t get_unconfirmed_tx(base::xtable_shortid_t peer_table_sid, uint64_t receipt_id) const;
 
 private:
     xtxpool_resources_face * m_para;

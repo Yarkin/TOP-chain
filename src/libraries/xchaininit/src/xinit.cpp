@@ -10,6 +10,7 @@
 #include "xrpc/xrpc_init.h"
 #include "xchaininit/xinit.h"
 #include "xchaininit/xconfig.h"
+#include "xchaininit/xchain_options.h"
 #include "xchaininit/xchain_params.h"
 #include "xbase/xutl.h"
 #include "xbase/xhash.h"
@@ -25,20 +26,13 @@
 #include "xchaininit/admin_http.h"
 #include "xtopcl/include/topcl.h"
 #include "xverifier/xverifier_utl.h"
+#include "xtopcl/include/api_method.h"
 
 // nlohmann_json
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
-#ifdef LEAK_TRACER
-#include "leaktracer/MemoryTrace.hpp"
-#include <csignal>
-#endif
 
-#ifdef ENABLE_GPERF
-#include "gperftools/profiler.h"
-#include <csignal>
-#endif
 namespace top{
 
 bool g_topchain_init_finish_flag = false;
@@ -79,43 +73,9 @@ static bool create_rootblock(const std::string & config_file) {
     xinfo("create_rootblock success");
     return true;
 }
-#ifdef LEAK_TRACER
-void export_mem_trace(int signal)
-{
-    leaktracer::MemoryTrace::GetInstance().stopMonitoringAllocations();
-    leaktracer::MemoryTrace::GetInstance().stopAllMonitoring();
 
-    std::ofstream oleaks;
 
-    oleaks.open(global_node_id + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + "leaks.out", std::ios_base::out);
-    if (oleaks.is_open())
-        leaktracer::MemoryTrace::GetInstance().writeLeaks(oleaks);
-    else
-        std::cerr << "Failed to write to \"leaks.out\"\n";
 
-    oleaks.close();
-}
-#endif
-
-#ifdef ENABLE_GPERF
-void setGperfStatus(int signum) {
-    static bool is_open = false;
-    if (signum != SIGUSR2) {
-        return ;
-    }
-    if (!is_open) {  // start
-        is_open = true;
-        ProfilerStart(std::string{"gperf_" + global_node_id + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".prof"}.c_str());
-        xkinfo("ProfilerStart success");
-        std::cout << "ProfilerStart success" << std::endl;
-    } else {  // stop
-        is_open = false;
-        ProfilerStop();
-        xkinfo("ProfilerStop success");
-        std::cout << "ProfilerStop success" << std::endl;
-    }
-}
-#endif
 
 int topchain_init(const std::string& config_file, const std::string& config_extra) {
     using namespace std;
@@ -125,15 +85,8 @@ int topchain_init(const std::string& config_file, const std::string& config_extr
     using namespace store;
     using namespace rpc;
 
-#ifdef LEAK_TRACER
-    std::signal(SIGUSR1, export_mem_trace);
-    leaktracer::MemoryTrace::GetInstance().startMonitoringAllThreads();
-#endif
-
-#ifdef ENABLE_GPERF
-    std::signal(SIGUSR2, setGperfStatus);
-    std::cout << "———— ENABLE_GPERF ————" << std::endl;
-#endif
+    // init up
+    setup_options();
 
     //using top::elect::xbeacon_xelect_imp;
     auto hash_plugin = new xtop_hash_t();
@@ -154,8 +107,8 @@ int topchain_init(const std::string& config_file, const std::string& config_extr
     chain_params.initconfig_using_configcenter();
     auto& user_params = data::xuser_params::get_instance();
     global_node_id = user_params.account.value();
-    global_node_signkey = base::xstring_utl::base64_decode(user_params.signkey);
-    global_platform_type = kChain;
+    global_node_signkey = DecodePrivateString(user_params.signkey);
+
 #ifdef CONFIG_CHECK
     // config check
     if (!user_params.is_valid()) return 1;
@@ -168,8 +121,11 @@ int topchain_init(const std::string& config_file, const std::string& config_extr
     std::cout << "account: " << global_node_id << std::endl;
     xinit_log(log_path.c_str(), true, true);
     xset_log_level((enum_xlog_level)log_level);
-    xinfo("=== xtopchain start here ===");
+    auto xbase_info = base::xcontext_t::get_xbase_info();
+    xwarn("=== xtopchain start here ===");
+    xwarn("=== xbase info: %s ===", xbase_info.c_str());
     std::cout << "=== xtopchain start here ===" << std::endl;
+    std::cout << "=== xbase info:" << xbase_info << " ===" << std::endl;
 
     MEMCHECK_INIT();
     if (false == create_rootblock(config_file)) {
@@ -298,16 +254,19 @@ bool load_bwlist_content(std::string const& config_file, std::map<std::string, s
 
 bool check_miner_info(const std::string &pub_key, const std::string &node_id) {
     g_userinfo.account = node_id;
+    if (top::base::xvaccount_t::get_addrtype_from_account(g_userinfo.account) == top::base::enum_vaccount_addr_type_secp256k1_eth_user_account)
+        std::transform(g_userinfo.account.begin() + 1, g_userinfo.account.end(), g_userinfo.account.begin() + 1, ::tolower);    
     top::xtopcl::xtopcl xtop_cl;
     std::string result;
     xtop_cl.api.change_trans_mode(true);
     std::vector<std::string> param_list;
-    std::string query_cmdline    = "system queryNodeInfo " + node_id;
+    std::string query_cmdline    = "system queryNodeInfo " + g_userinfo.account;
     xtop_cl.parser_command(query_cmdline, param_list);
     xtop_cl.do_command(param_list, result);
     auto query_find = result.find("account_addr");
     if (query_find == std::string::npos) {
-        std::cout << node_id << " account has not registered miner." << std::endl;
+        std::cout << g_userinfo.account << " account has not registered miner." << std::endl;
+        // std::cout << "result:"<<result<< std::endl;
         return false;
     }
     // registered
@@ -320,7 +279,7 @@ bool check_miner_info(const std::string &pub_key, const std::string &node_id) {
             auto node_sign_key = data["node_sign_key"].get<std::string>();
             if (node_sign_key != pub_key) {
                 std::cout << "The minerkey does not match miner account." << std::endl
-                    << node_id << " account's miner key is "
+                    << g_userinfo.account << " account's miner key is "
                     << node_sign_key << std::endl;
                 return false;
             }
@@ -432,8 +391,9 @@ int topchain_noparams_init(const std::string& pub_key, const std::string& pri_ke
     chain_params.initconfig_using_configcenter();
     auto& user_params = data::xuser_params::get_instance();
     global_node_id = user_params.account.value();
-    global_node_signkey = base::xstring_utl::base64_decode(user_params.signkey);
-    global_platform_type = kChain;
+
+    global_node_signkey = DecodePrivateString(user_params.signkey);    
+
 #ifdef CONFIG_CHECK
     // config check
     if (!user_params.is_valid()) {
@@ -453,6 +413,7 @@ int topchain_noparams_init(const std::string& pub_key, const std::string& pri_ke
     xset_log_level((enum_xlog_level)log_level);
     xinfo("=== xtopchain start here with noparams ===");
     std::cout << "xnode start begin..." << std::endl;
+
     // load bwlist
     std::map<std::string, std::string> bwlist;
     auto ret = load_bwlist_content(bwlist_path, bwlist);

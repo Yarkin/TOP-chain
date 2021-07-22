@@ -84,6 +84,12 @@ void xcluster_rpc_handler::cluster_process_request(const xrpc_msg_request_t & ed
                message.hash());
 
         if (xsuccess != m_txpool_service->request_transaction_consensus(tx_ptr, false)) {
+            xkinfo("[global_trace][advance_rpc][recv edge msg][push unit_service] tx hash: %s,%s,src %s,dst %s,%" PRIx64 " ignored",
+                  tx_hash.c_str(),
+                  account.c_str(),
+                  edge_sender.to_string().c_str(),
+                  m_cluster_vhost->address().to_string().c_str(),
+                  message.hash());
             return;
         }
     } else {
@@ -158,7 +164,7 @@ void xcluster_rpc_handler::cluster_process_query_request(const xrpc_msg_request_
     XMETRICS_COUNTER_INCREMENT("rpc_auditor_query_request", 1);
     response_msg_ptr->m_signature_address = m_cluster_vhost->address();
     xmessage_t msg(codec::xmsgpack_codec_t<xrpc_msg_response_t>::encode(*response_msg_ptr), rpc_msg_response);
-    xinfo_rpc("xcluster_rpc_handler response recv %" PRIx64 ", send %" PRIx64 ", %s", message.hash(), msg.hash(), response_msg_ptr->m_message_body.c_str());
+    xdbg_rpc("xcluster_rpc_handler response recv %" PRIx64 ", send %" PRIx64 ", %s", message.hash(), msg.hash(), response_msg_ptr->m_message_body.c_str());
     m_cluster_vhost->send_to(edge_sender, msg);
 }
 

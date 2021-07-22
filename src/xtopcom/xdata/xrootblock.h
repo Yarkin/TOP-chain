@@ -15,17 +15,14 @@
 
 NS_BEG2(top, data)
 
-class xrootblock_input_t : public xventity_face_t<xrootblock_input_t, xdata_type_rootblock_input_entity> {
+class xrootblock_input_t : public base::xdataunit_t {
  public:
-    xrootblock_input_t() = default;
+    xrootblock_input_t();
 
  protected:
-    virtual ~xrootblock_input_t() {}
-    int32_t do_write(base::xstream_t &stream) override;
-    int32_t do_read(base::xstream_t &stream) override;
-
- public:
-    virtual const std::string query_value(const std::string & key) override {return std::string();}//virtual key-value for entity
+    virtual ~xrootblock_input_t();
+    int32_t do_write(base::xstream_t &stream);
+    int32_t do_read(base::xstream_t &stream);
 
  public:
     bool    set_account_balances(std::map<std::string, uint64_t> const& balances);
@@ -52,17 +49,19 @@ struct xrootblock_para_t {
     std::vector<std::string>                  m_geneis_funds_accounts;
     std::vector<std::string>                  m_tcc_accounts;
     std::vector<node_info_t>                  m_genesis_nodes;
-    uint64_t                                  m_genesis_time_stamp;
-    uint64_t                                  m_genesis_clock;
+    uint64_t                                  m_genesis_time_stamp{0};
 };
 class xrootblock_t : public xblock_t {
+ public:
+    static XINLINE_CONSTEXPR char const * root_resource_name     = "0";
+    static XINLINE_CONSTEXPR char const * ROOT_BLOCK_PROPERTY_NAME  = "$R";
  protected:
     enum { object_type_value = enum_xdata_type::enum_xdata_type_max - xdata_type_rootblock };
-    static xblockbody_para_t get_blockbody_from_para(const xrootblock_para_t & para);
  public:
     static bool init(const xrootblock_para_t & para);
+ public:
+    xrootblock_t(base::xvheader_t & header, base::xvqcert_t & cert, base::xvinput_t* input, base::xvoutput_t* output);
  protected:
-    xrootblock_t(base::xvheader_t & header, xblockcert_t & cert, const xinput_ptr_t & input = nullptr, const xoutput_ptr_t & output = nullptr);
     virtual ~xrootblock_t();
  private:
     xrootblock_t();
@@ -79,7 +78,7 @@ class xrootblock_t : public xblock_t {
     void dump_block_data(xJson::Value & json) const override;
 
  protected:
-    xrootblock_input_t*    get_rootblock_input() const {return (xrootblock_input_t*)(get_input()->get_entitys()[0]);}
+    xrootblock_input_t*    get_rootblock_input() const;
 
  public:
     static base::xvblock_t* get_rootblock();

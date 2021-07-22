@@ -93,10 +93,10 @@ void xchain_block_fetcher_t::on_newblock(data::xblock_ptr_t &block, const vnetwo
 }
 
 // push_newblockhash and broadcast_newblockhash
-void xchain_block_fetcher_t::on_newblockhash(uint64_t height, uint64_t view_id, const std::string &hash,
+void xchain_block_fetcher_t::on_newblockhash(uint64_t height, const std::string &hash,
         const vnetwork::xvnode_address_t &network_self, const vnetwork::xvnode_address_t &from_address) {
 
-    xsync_info("chain_fetcher on_newblockhash %s,height=%lu,viewid=%lu,hash=%s,", m_address.c_str(), height, view_id, to_hex_str(hash).c_str());
+    xsync_info("chain_fetcher on_newblockhash %s,height=%lu,hash=%s,", m_address.c_str(), height, to_hex_str(hash).c_str());
 
     if (m_announces.find(from_address) == m_announces.end()) {
         m_announces[from_address] = 1;
@@ -108,19 +108,19 @@ void xchain_block_fetcher_t::on_newblockhash(uint64_t height, uint64_t view_id, 
         xdbg("chain_fetcher on_newblockhash self: %s, recv count: %d, from node: %s", network_self.to_string().c_str(), m_announces[from_address], from_address.to_string().c_str());
     }
 
-    if (height==0 || view_id==0 || hash=="")
+    if (height==0 || hash=="")
             return;
 
     if ((m_fetching.find(hash) != m_fetching.end()) || (m_completing.find(hash) != m_completing.end())) {
             return;
         }
 
-    xsync_block_announce_ptr_t announce = std::make_shared<xsync_block_announce_t>(height, view_id, hash, network_self, from_address, get_time());
+    xsync_block_announce_ptr_t announce = std::make_shared<xsync_block_announce_t>(height, hash, network_self, from_address, get_time());
 
     // if is push_newblockhash, process it immediately
     common::xnode_type_t self_node_type = network_self.type();
     common::xnode_type_t from_node_type = from_address.type();
-    if (common::has<common::xnode_type_t::archive>(self_node_type) &&
+    if (common::has<common::xnode_type_t::storage>(self_node_type) &&
         (
             common::has<common::xnode_type_t::rec>(from_node_type) ||
             common::has<common::xnode_type_t::zec>(from_node_type) ||
@@ -130,7 +130,7 @@ void xchain_block_fetcher_t::on_newblockhash(uint64_t height, uint64_t view_id, 
         base::xauto_ptr<base::xvblock_t> blk = m_sync_store->query_block(m_address, height, hash);
         if (blk != nullptr) {
             forget_hash(hash);
-            xsync_dbg("chain_fetcher on_newblockhash(exist) %s,height=%lu,viewid=%lu,hash=%s,", m_address.c_str(), height, view_id, to_hex_str(hash).c_str());
+            xsync_dbg("chain_fetcher on_newblockhash(exist) %s,height=%lu,hash=%s,", m_address.c_str(), height, to_hex_str(hash).c_str());
             return;
         }
 
@@ -202,10 +202,10 @@ void xchain_block_fetcher_t::import_block(xblock_ptr_t &block) {
     xsync_info("chain_fetcher handle_block %s,height=%lu,viewid=%lu,hash=%s,",
             m_address.c_str(), block->get_height(), block->get_viewid(), to_hex_str(block->get_block_hash()).c_str());
 
-    if (is_beacon_table(m_address) && !check_auth(m_certauth, block)) {
-        xsync_warn("chain_fetcher handle_block auth failed %s", block->dump().c_str());
-        return;
-    }
+    // if (is_beacon_table(m_address) && !check_auth(m_certauth, block)) {
+    //     xsync_warn("chain_fetcher handle_block auth failed %s", block->dump().c_str());
+    //     return;
+    // }
 
     base::xvblock_t* vblock = dynamic_cast<base::xvblock_t*>(block.get());
     bool ret = m_sync_store->store_block(vblock);
@@ -221,23 +221,23 @@ void xchain_block_fetcher_t::import_block(xblock_ptr_t &block) {
         return;
     }
 
-    if (m_sync_broadcast != nullptr)
-        m_sync_broadcast->broadcast_newblockhash_to_archive_neighbors(block);
+    // disable broadcast newblockhash to archive neighbors
+    // if (m_sync_broadcast != nullptr)
+    //     m_sync_broadcast->broadcast_newblockhash_to_archive_neighbors(block);
 }
 
 // need vector?
 void xchain_block_fetcher_t::request_sync_blocks(const xsync_block_announce_ptr_t &announce) {
 
     uint64_t height = announce->height;
-    uint64_t viewid = announce->viewid;
     const std::string &hash = announce->hash;
     const vnetwork::xvnode_address_t &network_self = announce->network_self;
     const vnetwork::xvnode_address_t &target_address = announce->from_address;
 
     XMETRICS_COUNTER_INCREMENT("sync_blockfetcher_request", 1);
 
-    xsync_info("chain_fetcher send sync request(block_by_hash). %s,heigth=%lu,viewid=%lu,hash=%s, %s",
-                m_address.c_str(), height, viewid, to_hex_str(hash).c_str(), target_address.to_string().c_str());
+    xsync_info("chain_fetcher send sync request(block_by_hash). %s,heigth=%lu,hash=%s, %s",
+                m_address.c_str(), height, to_hex_str(hash).c_str(), target_address.to_string().c_str());
 
     std::vector<xblock_hash_t> hashes;
     xblock_hash_t info;

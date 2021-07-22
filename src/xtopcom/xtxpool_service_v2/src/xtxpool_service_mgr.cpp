@@ -24,6 +24,8 @@ NS_BEG2(top, xtxpool_service_v2)
 
 #define max_mailbox_num (8192)
 
+#define print_txpool_statistic_values_freq (300)  // print txpool statistic values every 5 minites
+
 xtxpool_service_mgr::xtxpool_service_mgr(const observer_ptr<store::xstore_face_t> & store,
                                          const observer_ptr<base::xvblockstore_t> & blockstore,
                                          const observer_ptr<xtxpool_v2::xtxpool_face_t> & txpool,
@@ -39,11 +41,11 @@ xtxpool_service_mgr::xtxpool_service_mgr(const observer_ptr<store::xstore_face_t
 }
 
 void xtxpool_service_mgr::on_block_to_db_event(mbus::xevent_ptr_t e) {
-    if (e->minor_type != mbus::xevent_store_t::type_block_to_db) {
+    if (e->minor_type != mbus::xevent_store_t::type_block_committed) {
         return;
     }
 
-    mbus::xevent_store_block_to_db_ptr_t block_event = dynamic_xobject_ptr_cast<mbus::xevent_store_block_to_db_t>(e);
+    mbus::xevent_store_block_committed_ptr_t block_event = dynamic_xobject_ptr_cast<mbus::xevent_store_block_committed_t>(e);
 
     if (block_event->blk_level != base::enum_xvblock_level_table) {
         return;
@@ -55,8 +57,14 @@ void xtxpool_service_mgr::on_block_to_db_event(mbus::xevent_ptr_t e) {
     }
 
     auto event_handler = [this, e](base::xcall_t & call, const int32_t cur_thread_id, const uint64_t timenow_ms) -> bool {
-        mbus::xevent_store_block_to_db_ptr_t block_event = dynamic_xobject_ptr_cast<mbus::xevent_store_block_to_db_t>(e);
-        const xblock_ptr_t & block = mbus::extract_block_from(block_event);
+        mbus::xevent_store_block_committed_ptr_t block_event = dynamic_xobject_ptr_cast<mbus::xevent_store_block_committed_t>(e);
+        const xblock_ptr_t & block = mbus::extract_block_from(block_event,metrics::blockstore_access_from_mbus_txpool_db_event_on_block);
+        base::xvaccount_t _vaccount(block->get_account());
+        // TODO(jimmy) load block input for get raw tx nonce
+        if (false == base::xvchain_t::instance().get_xblockstore()->load_block_input(_vaccount, block.get(), metrics::blockstore_access_from_txpool_on_block_event)) {
+            xerror("xtxpool_service_mgr::on_block_to_db_event fail-load block input output, block=%s", block->dump().c_str());
+            return true;
+        }
         xassert(block->check_block_flag(base::enum_xvblock_flag_committed));
         on_block_confirmed(block.get());
         return true;
@@ -66,30 +74,10 @@ void xtxpool_service_mgr::on_block_to_db_event(mbus::xevent_ptr_t e) {
 }
 
 void xtxpool_service_mgr::on_block_confirmed(xblock_t * block) {
-    uint64_t now_clock = m_clock->logic_time();
-
-    xinfo("xtxpool_service_mgr::on_block_confirmed process,level:%d,class:%d,now=%llu,block:%s",
-          block->get_block_level(),
-          block->get_block_class(),
-          now_clock,
-          block->dump().c_str());
-
-    deal_table_block(block, now_clock);
+    xinfo("xtxpool_service_mgr::on_block_confirmed process,level:%d,class:%d,block:%s", block->get_block_level(), block->get_block_class(), block->dump().c_str());
 
     if (block->is_lighttable()) {
         m_para->get_txpool()->on_block_confirmed(block);
-    }
-}
-
-void xtxpool_service_mgr::deal_table_block(xblock_t * block, uint64_t now_clock) {
-    std::string account_addr = block->get_account();
-    auto tableid = data::account_map_to_table_id(common::xaccount_address_t{account_addr});
-    std::shared_ptr<xtxpool_service_face> service = find_receipt_sender(tableid);
-    if (service != nullptr) {
-        xinfo("xtxpool_service_mgr::deal_table_block service found,zone:%d table:%d block:%s", tableid.get_zone_index(), tableid.get_subaddr(), block->dump().c_str());
-        service->deal_table_block(block, now_clock);
-    } else {
-        xdbg("xtxpool_service_mgr::deal_table_block fail,no service found,zone:%d table:%d block:%s", tableid.get_zone_index(), tableid.get_subaddr(), block->dump().c_str());
     }
 }
 
@@ -97,7 +85,7 @@ void xtxpool_service_mgr::deal_table_block(xblock_t * block, uint64_t now_clock)
 xtxpool_proxy_face_ptr xtxpool_service_mgr::create(const std::shared_ptr<vnetwork::xvnetwork_driver_face_t> & vnet_driver, const observer_ptr<router::xrouter_face_t> & router) {
     auto xip = xcons_utl::to_xip2(vnet_driver->address(), true);
     auto key = xcons_utl::erase_version(xip);
-    xinfo("xtxpool_service_mgr::create network proxy %s addr:%" PRIx64 " ", vnet_driver->address().to_string().c_str(), xip.low_addr);
+    xinfo("xtxpool_service_mgr::create network proxy %s xip:{%" PRIu64 ", %" PRIu64 "} ", vnet_driver->address().to_string().c_str(), xip.high_addr, xip.low_addr);
 
     auto service = find(key);
     if (service != nullptr) {
@@ -123,8 +111,7 @@ xtxpool_proxy_face_ptr xtxpool_service_mgr::create(const std::shared_ptr<vnetwor
 // destroy useless txpool services by networkdriver, call by vnode manager while detemine some service useless
 // must call uninit before
 bool xtxpool_service_mgr::destroy(const xvip2_t & xip) {
-    auto key = xcons_utl::erase_version(xip);
-    xinfo("xtxpool_service_mgr::destroy network proxy %" PRIx64 " ", xip.low_addr);
+    xinfo("xtxpool_service_mgr::destroy xip:{%" PRIu64 ", %" PRIu64 "} ", xip.high_addr, xip.low_addr);
     // erase useless txpool service
     bool need_cleanup = false;
     base::enum_xchain_zone_index zone_id;
@@ -132,18 +119,23 @@ bool xtxpool_service_mgr::destroy(const xvip2_t & xip) {
     uint32_t back_table_id;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        auto iter = m_service_map.find(key);
-        if (iter != m_service_map.end()) {
+        for (auto iter = m_service_map.begin(); iter != m_service_map.end(); iter++)
+        {
             auto txpool_service = iter->second;
-            txpool_service->get_service_table_boundary(zone_id, fount_table_id, back_table_id);
-            need_cleanup = true;
-            m_service_map.erase(iter);
+            if (xcons_utl::xip_equals(xip, txpool_service->get_cluster_xip())) {
+                txpool_service->get_service_table_boundary(zone_id, fount_table_id, back_table_id);
+                need_cleanup = true;
+                m_service_map.erase(iter);
+                break;
+            }
         }
     }
 
     if (need_cleanup) {
         // clear txpool tables corresponding to this service
         m_para->get_txpool()->unsubscribe_tables(zone_id, fount_table_id, back_table_id);
+    } else {
+        xinfo("xtxpool_service_mgr::destroy xip:{%" PRIu64 ", %" PRIu64 "} not found", xip.high_addr, xip.low_addr);
     }
 
     return true;
@@ -163,7 +155,7 @@ std::shared_ptr<xtxpool_service_face> xtxpool_service_mgr::find(const xvip2_t & 
 // init txpool service
 bool xtxpool_service_mgr::start(const xvip2_t & xip, const std::shared_ptr<vnetwork::xvnetwork_driver_face_t> & vnet_driver) {
     auto key = xcons_utl::erase_version(xip);
-    xinfo("xtxpool_service_mgr::start network proxy %" PRIx64 " ", xip.low_addr);
+    xinfo("xtxpool_service_mgr::start xip:{%" PRIu64 ", %" PRIu64 "} ", xip.high_addr, xip.low_addr);
     std::shared_ptr<xtxpool_service_face> service = find(key);
     if (service != nullptr) {
         service->set_params(xip, vnet_driver);
@@ -176,24 +168,13 @@ bool xtxpool_service_mgr::start(const xvip2_t & xip, const std::shared_ptr<vnetw
 // uninit data
 bool xtxpool_service_mgr::fade(const xvip2_t & xip) {
     auto key = xcons_utl::erase_version(xip);
-    xinfo("xtxpool_service_mgr::fade network proxy %" PRIx64 " ", xip.low_addr);
+    xinfo("xtxpool_service_mgr::fade xip:{%" PRIu64 ", %" PRIu64 "} ", xip.high_addr, xip.low_addr);
     std::shared_ptr<xtxpool_service_face> service = find(key);
     if (service != nullptr) {
         service->fade(xip);
         return true;
     }
     return false;
-}
-
-std::shared_ptr<xtxpool_service_face> xtxpool_service_mgr::find_receipt_sender(const xtable_id_t & tableid) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    for (auto & iter : m_service_map) {
-        auto service = iter.second;
-        if (service->is_receipt_sender(tableid)) {
-            return service;
-        }
-    }
-    return nullptr;
 }
 
 xcons_transaction_ptr_t xtxpool_service_mgr::query_tx(const std::string & account, const uint256_t & hash) const {
@@ -208,11 +189,13 @@ void xtxpool_service_mgr::start() {
     xinfo("xtxpool_service_mgr::start");
     m_bus_listen_id = m_mbus->add_listener(top::mbus::xevent_major_type_store, std::bind(&xtxpool_service_mgr::on_block_to_db_event, this, std::placeholders::_1));
     m_timer = new xtxpool_service_timer_t(top::base::xcontext_t::instance(), m_iothread_timer->get_thread_id(), this);
+    m_timer->create_mailbox(256, max_mailbox_num, max_mailbox_num);
     m_timer->start(0, 1000);
 
     m_dispatcher = new xtxpool_service_dispatcher_imp_t(top::base::xcontext_t::instance(), m_iothread_dispatcher->get_thread_id(), this);
     m_dispatcher->create_mailbox(256, max_mailbox_num, max_mailbox_num);  // create dedicated mailbox for txpool
-    m_para->set_dispatcher(make_observer(m_dispatcher));
+
+    m_para->set_dispatchers(make_observer(m_dispatcher), make_observer(m_timer));
 }
 
 void xtxpool_service_mgr::stop() {
@@ -223,25 +206,31 @@ void xtxpool_service_mgr::stop() {
 
 void xtxpool_service_mgr::on_timer() {
     uint64_t now = xverifier::xtx_utl::get_gmttime_s();
-    bool is_time_for_recover_unconfirmed_txs = xreceipt_strategy_t::is_time_for_recover_unconfirmed_txs(now);
-    typedef std::tuple<base::enum_xchain_zone_index, uint32_t, uint32_t> table_boundary_t;
+    bool is_time_for_refresh_table = xreceipt_strategy_t::is_time_for_refresh_table(now);
+    typedef std::tuple<base::enum_xchain_zone_index, uint32_t, uint32_t, bool> table_boundary_t;
     std::vector<table_boundary_t> table_boundarys;
-    std::vector<std::shared_ptr<xtxpool_service_face>> service_vec;
+    std::vector<std::shared_ptr<xtxpool_service_face>> pull_lacking_receipts_service_vec;
+    std::vector<std::shared_ptr<xtxpool_service_face>> receipts_recender_service_vec;
+
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         for (auto & iter : m_service_map) {
             auto service = iter.second;
             // only receipt sender need recover unconfirmed txs.
             if (service->is_send_receipt_role()) {
-                service_vec.push_back(service);
-                if (is_time_for_recover_unconfirmed_txs) {
-                    base::enum_xchain_zone_index zone_id;
-                    uint32_t fount_table_id;
-                    uint32_t back_table_id;
-                    service->get_service_table_boundary(zone_id, fount_table_id, back_table_id);
-                    table_boundary_t table_boundary(zone_id, fount_table_id, back_table_id);
-                    table_boundarys.push_back(table_boundary);
-                }
+                pull_lacking_receipts_service_vec.insert(pull_lacking_receipts_service_vec.begin(), service);
+                receipts_recender_service_vec.push_back(service);
+            } else {
+                pull_lacking_receipts_service_vec.push_back(service);
+            }
+
+            if (is_time_for_refresh_table) {
+                base::enum_xchain_zone_index zone_id;
+                uint32_t fount_table_id;
+                uint32_t back_table_id;
+                service->get_service_table_boundary(zone_id, fount_table_id, back_table_id);
+                table_boundary_t table_boundary(zone_id, fount_table_id, back_table_id, service->is_send_receipt_role());
+                table_boundarys.push_back(table_boundary);
             }
         }
     }
@@ -251,15 +240,25 @@ void xtxpool_service_mgr::on_timer() {
         base::enum_xchain_zone_index zone_id = std::get<0>(table_boundary);
         uint32_t fount_table_id = std::get<1>(table_boundary);
         uint32_t back_table_id = std::get<2>(table_boundary);
-        xinfo("xtxpool_service_mgr::on_timer, recover unconfirmed txs for zone:%d table:%d:%d", zone_id, fount_table_id, back_table_id);
+        bool refresh_unconfirm_txs = std::get<3>(table_boundary);
+        xinfo("xtxpool_service_mgr::on_timer, refresh table zone:%d table:%d:%d refresh_unconfirm_txs:%d", zone_id, fount_table_id, back_table_id, refresh_unconfirm_txs);
         for (uint32_t table_id = fount_table_id; table_id <= back_table_id; table_id++) {
-            m_para->get_txpool()->update_unconfirm_accounts(zone_id, table_id);
+            m_para->get_txpool()->refresh_table(zone_id, table_id, refresh_unconfirm_txs);
             // m_para->get_txpool()->update_non_ready_accounts(zone_id, table_id);
         }
     }
 
-    for (auto service : service_vec) {
+    xcovered_tables_t covered_tables;
+    for (auto service : pull_lacking_receipts_service_vec) {
+        service->pull_lacking_receipts(now, covered_tables);
+    }
+
+    for (auto service : receipts_recender_service_vec) {
         service->resend_receipts(now);
+    }
+
+    if ((now % print_txpool_statistic_values_freq) == 0) {
+        m_para->get_txpool()->print_statistic_values();
     }
 }
 
@@ -295,6 +294,21 @@ bool xtxpool_service_dispatcher_imp_t::is_mailbox_over_limit() {
     bool discard = queue_size >= max_mailbox_num;
     if (discard) {
         xwarn("xtxpool_service_dispatcher_imp_t::is_mailbox_over_limit in=%ld,out=%ld", in, out);
+        return true;
+    }
+    return false;
+}
+
+void xtxpool_service_timer_t::dispatch(base::xcall_t & call) {
+    send_call(call);
+}
+
+bool xtxpool_service_timer_t::is_mailbox_over_limit() {
+    int64_t in, out;
+    int32_t queue_size = count_calls(in, out);
+    bool discard = queue_size >= max_mailbox_num;
+    if (discard) {
+        xwarn("xtxpool_service_timer_t::is_mailbox_over_limit in=%ld,out=%ld", in, out);
         return true;
     }
     return false;

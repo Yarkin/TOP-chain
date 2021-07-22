@@ -24,7 +24,6 @@ using data::xaccount_ptr_t;
 
 class xblockmaker_resources_t {
  public:
-    virtual store::xstore_face_t*       get_store() const = 0;
     virtual base::xvblockstore_t*       get_blockstore() const = 0;
     virtual xtxpool_v2::xtxpool_face_t* get_txpool() const = 0;
     virtual mbus::xmessage_bus_face_t*  get_bus() const = 0;
@@ -38,16 +37,14 @@ class xblockmaker_resources_impl_t : public xblockmaker_resources_t {
                                  const observer_ptr<base::xvblockstore_t> & blockstore,
                                  const observer_ptr<xtxpool_v2::xtxpool_face_t> & txpool,
                                  const observer_ptr<mbus::xmessage_bus_face_t> & bus)
-    : m_store(store), m_blockstore(blockstore), m_txpool(txpool), m_bus(bus) {}
+    : m_blockstore(blockstore), m_txpool(txpool), m_bus(bus) {}
 
-    virtual store::xstore_face_t*       get_store() const {return m_store.get();}
     virtual base::xvblockstore_t*       get_blockstore() const {return m_blockstore.get();}
     virtual xtxpool_v2::xtxpool_face_t* get_txpool() const {return m_txpool.get();}
     virtual mbus::xmessage_bus_face_t*  get_bus() const {return m_bus.get();}
     virtual base::xvblkstatestore_t*    get_xblkstatestore() const {return base::xvchain_t::instance().get_xstatestore()->get_blkstate_store();}
 
  private:
-    observer_ptr<store::xstore_face_t>          m_store{nullptr};
     observer_ptr<base::xvblockstore_t>          m_blockstore{nullptr};
     observer_ptr<xtxpool_v2::xtxpool_face_t>    m_txpool{nullptr};
     observer_ptr<mbus::xmessage_bus_face_t>     m_bus{nullptr};
@@ -58,6 +55,7 @@ struct xunitmaker_result_t {
     int32_t                                 m_make_block_error_code{0};
     std::vector<xcons_transaction_ptr_t>    m_success_txs;
     std::vector<xcons_transaction_ptr_t>    m_fail_txs;
+    int64_t                                 m_tgas_balance_change{0};
 };
 
 struct xunitmaker_para_t {
@@ -128,34 +126,25 @@ class xtablemaker_para_t {
 
 class xblock_maker_t : public base::xvaccount_t {
  public:
-    explicit xblock_maker_t(const std::string & account, const xblockmaker_resources_ptr_t & resources, uint32_t latest_blocks_max)
-    : base::xvaccount_t(account), m_resources(resources), m_keep_latest_blocks_max(latest_blocks_max) {}
-    virtual ~xblock_maker_t() {}
+    explicit xblock_maker_t(const std::string & account, const xblockmaker_resources_ptr_t & resources, uint32_t latest_blocks_max);
+    virtual ~xblock_maker_t();
 
  public:
     void                        set_latest_block(const xblock_ptr_t & block);
-    bool                        load_and_cache_enough_blocks(const xblock_ptr_t & latest_block, uint64_t & from_height, uint64_t & lacked_block_height);
-    bool                        check_latest_blocks() const;
+    void                        reset_latest_cert_block(const xblock_ptr_t & block);
+    bool                        load_and_cache_enough_blocks(const xblock_ptr_t & latest_block, uint64_t & lacked_block_height);
+    bool                        check_latest_blocks(const xblock_ptr_t & latest_block) const;
 
  public:
-    store::xstore_face_t*       get_store() const {return m_resources->get_store();}
     base::xvblockstore_t*       get_blockstore() const {return m_resources->get_blockstore();}
     xtxpool_v2::xtxpool_face_t*    get_txpool() const {return m_resources->get_txpool();}
     mbus::xmessage_bus_face_t*  get_bus() const {return m_resources->get_bus();}
     const xblockmaker_resources_ptr_t & get_resources() const {return m_resources;}
 
-    uint64_t                    get_keep_latest_blocks_max() const {return m_keep_latest_blocks_max;}
     const xaccount_ptr_t &      get_latest_bstate() const {return m_latest_bstate;}
-    xaccount_ptr_t              get_latest_committed_state() const;
-    std::string                 get_lock_block_sign_hash() const;
-    std::string                 get_lock_output_root_hash() const;
     const std::map<uint64_t, xblock_ptr_t> & get_latest_blocks() const {return m_latest_blocks;}
     const xblock_ptr_t &        get_highest_height_block() const;
-    const xblock_ptr_t &        get_lowest_height_block() const;
-    xblock_ptr_t                get_highest_non_empty_block() const;
-    xblock_ptr_t                get_highest_lock_block() const;
-    xblock_ptr_t                get_highest_commit_block() const;
-    xblock_ptr_t                get_prev_block(const xblock_ptr_t & current) const;
+    xblock_ptr_t                get_prev_block_from_cache(const xblock_ptr_t & current) const;
     bool                        verify_latest_blocks(base::xvblock_t* latest_cert_block, base::xvblock_t* lock_block, base::xvblock_t* commited_block);
 
  protected:
@@ -187,15 +176,17 @@ class xblock_builder_para_face_t {
     : m_resources(resources) {}
 
  public:
-    virtual store::xstore_face_t*       get_store() const {return m_resources->get_store();}
     virtual base::xvblockstore_t*       get_blockstore() const {return m_resources->get_blockstore();}
     virtual xtxpool_v2::xtxpool_face_t* get_txpool() const {return m_resources->get_txpool();}
     virtual int32_t                     get_error_code() const {return m_error_code;}
     virtual void                        set_error_code(int32_t error_code) {m_error_code = error_code;}
+    int64_t get_tgas_balance_change() const { return m_tgas_balance_change; }
+    void set_tgas_balance_change(const int64_t amount) { m_tgas_balance_change = amount; }
 
  private:
     xblockmaker_resources_ptr_t m_resources{nullptr};
     int32_t                     m_error_code{0};
+    int64_t                     m_tgas_balance_change{0};
 };
 using xblock_builder_para_ptr_t = std::shared_ptr<xblock_builder_para_face_t>;
 

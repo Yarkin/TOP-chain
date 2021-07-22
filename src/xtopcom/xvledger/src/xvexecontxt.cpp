@@ -7,7 +7,7 @@
 #include "../xvstate.h"
 #include "../xvexecontxt.h"
 #include "../xvledger.h"
- 
+#include "xmetrics/xmetrics.h"
 namespace top
 {
     namespace base
@@ -25,12 +25,14 @@ namespace top
                 reset_input_canvas(input_canvas);
             if(output_canvas != NULL)
                 reset_output_canvas(output_canvas);
+            XMETRICS_GAUGE(metrics::dataobject_xvexecontxt, 1);
         }
     
         xvexecontxt_t::~xvexecontxt_t()
         {
             reset_input_canvas(NULL);
             reset_output_canvas(NULL);
+            XMETRICS_GAUGE(metrics::dataobject_xvexecontxt, -1);
         }
     
         void   xvexecontxt_t::reset_input_canvas(xvcanvas_t * new_ptr)
@@ -87,7 +89,7 @@ namespace top
             m_block_state = NULL;
             
             xvaccount_t target_account(target_header.get_account());
-            xauto_ptr<xvbstate_t> target_state(xvchain_t::instance().get_xstatestore()->get_block_state(target_account,target_header.get_height() - 1, target_header.get_last_block_hash()));
+            xauto_ptr<xvbstate_t> target_state(xvchain_t::instance().get_xstatestore()->get_block_state(target_account,target_header.get_height() - 1, target_header.get_last_block_hash(), metrics::statestore_access_from_blk_ctx));
             if(target_state)
             {
                 m_block_state = target_state.get();
@@ -104,7 +106,7 @@ namespace top
         {
             m_block_state = NULL;
             
-            xauto_ptr<xvbstate_t> target_state(xvchain_t::instance().get_xstatestore()->get_block_state((xvblock_t*)&target_block));
+            xauto_ptr<xvbstate_t> target_state(xvchain_t::instance().get_xstatestore()->get_block_state((xvblock_t*)&target_block, metrics::statestore_access_from_blk_ctx));
             if(target_state)
             {
                 m_block_state = target_state.get();

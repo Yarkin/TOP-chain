@@ -43,13 +43,6 @@ void xsync_sender_t::send_gossip(const std::vector<xgossip_chain_info_ptr_t> &in
         lists = m_role_xips_mgr->get_rand_archives(max_peers);
     }
 
-    if (lists.empty()) {
-        xsync_warn("xsync_sender_t can't send gossip message due to get 0 peers for self xip : %s target_type:%d", self_xip.to_string().c_str(), target_type);
-        return;
-    }
-
-    //xsync_dbg("xsync_sender_t get gossip peers %d", lists.size());
-
     for (auto& addr : lists) {
         xsync_dbg("xsync_sender_t send gossip %s -> %s", self_xip.to_string().c_str(), addr.to_string().c_str());
         XMETRICS_COUNTER_INCREMENT("sync_pkgs_gossip_send", 1);
@@ -185,17 +178,17 @@ void xsync_sender_t::push_newblock(const data::xblock_ptr_t &block, const vnetwo
 }
 
 void xsync_sender_t::push_newblockhash(const data::xblock_ptr_t &block, const vnetwork::xvnode_address_t& self_addr, const vnetwork::xvnode_address_t& target_addr) {
-    auto body = make_object_ptr<xsync_message_general_newblockhash_t>(block->get_account(), block->get_height(), block->get_viewid(), block->get_block_hash());
+    auto body = make_object_ptr<xsync_message_general_newblockhash_t>(block->get_account(), block->get_height(), block->get_block_hash());
     send_message(body, xmessage_id_sync_push_newblockhash, "push_newblockhash", self_addr, target_addr);
-    xsync_dbg("xsync_sender_t send push_newblockhash %s,height=%lu,viewid=%lu,hash=%s, src %s dst %s", 
-        block->get_account().c_str(), block->get_height(), block->get_viewid(), to_hex_str(block->get_block_hash()).c_str(), self_addr.to_string().c_str(), target_addr.to_string().c_str());
+    xsync_dbg("xsync_sender_t send push_newblockhash %s,height=%lu,hash=%s, src %s dst %s", 
+        block->get_account().c_str(), block->get_height(), to_hex_str(block->get_block_hash()).c_str(), self_addr.to_string().c_str(), target_addr.to_string().c_str());
 }
 
 void xsync_sender_t::broadcast_newblockhash(const data::xblock_ptr_t &block, const vnetwork::xvnode_address_t& self_addr, const vnetwork::xvnode_address_t& target_addr) {
-    auto body = make_object_ptr<xsync_message_general_newblockhash_t>(block->get_account(), block->get_height(), block->get_viewid(), block->get_block_hash());
+    auto body = make_object_ptr<xsync_message_general_newblockhash_t>(block->get_account(), block->get_height(), block->get_block_hash());
     send_message(body, xmessage_id_sync_broadcast_newblockhash, "broadcast_newblockhash", self_addr, target_addr);
-    xsync_dbg("xsync_sender_t send broadcast_newblockhash %s,height=%lu,viewid=%lu,hash=%s, src %s dst %s", 
-        block->get_account().c_str(), block->get_height(), block->get_viewid(), to_hex_str(block->get_block_hash()).c_str(), self_addr.to_string().c_str(), target_addr.to_string().c_str());
+    xsync_dbg("xsync_sender_t send broadcast_newblockhash %s,height=%lu,hash=%s, src %s dst %s", 
+        block->get_account().c_str(), block->get_height(), to_hex_str(block->get_block_hash()).c_str(), self_addr.to_string().c_str(), target_addr.to_string().c_str());
 }
 
 void xsync_sender_t::send_get_blocks_by_hashes(const std::vector<xblock_hash_t> &hashes, const vnetwork::xvnode_address_t &self_addr, const vnetwork::xvnode_address_t &target_addr) {

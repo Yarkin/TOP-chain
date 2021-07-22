@@ -11,7 +11,7 @@
 
 NS_BEG2(top, xunit_service)
 
-xnetwork_proxy::xnetwork_proxy(const std::shared_ptr<xelection_cache_face> & face) : m_elect_face(face) {}
+xnetwork_proxy::xnetwork_proxy(const std::shared_ptr<xelection_cache_face> & face, observer_ptr<router::xrouter_face_t> const & router) : m_elect_face(face), m_router(router)  {}
 
 // network proxy, just send msg according by to address
 bool xnetwork_proxy::send_out(uint32_t msg_type, const xvip2_t & from_addr, const xvip2_t & to_addr, const base::xcspdu_t & packet, int32_t cur_thread_id, uint64_t timenow_ms) {
@@ -279,6 +279,69 @@ bool xnetwork_proxy::erase(const xvip2_t & addr) {
         }
     }
     return false;
+}
+
+void xnetwork_proxy::send_receipt_msgs(const xvip2_t & from_addr,
+                                       const std::vector<data::xcons_transaction_ptr_t> & receipts,
+                                       std::vector<data::xcons_transaction_ptr_t> & non_shard_cross_receipts) {
+    auto net_driver = find(from_addr);
+    if (net_driver == nullptr) {
+        xunit_warn("xnetwork_proxy::send_receipt_msgs net_driver not found,can not send receipt addr:%s", xcons_utl::xip_to_hex(from_addr).c_str());
+        return;
+    }
+    for (auto & receipt : receipts) {
+        send_receipt_msg(net_driver, receipt, non_shard_cross_receipts);
+    }
+}
+
+void xnetwork_proxy::send_receipt_msg(std::shared_ptr<vnetwork::xvnetwork_driver_face_t> net_driver,
+                                      const data::xcons_transaction_ptr_t & receipt,
+                                      std::vector<data::xcons_transaction_ptr_t> & non_shard_cross_receipts) {
+    try {
+        xassert(receipt->is_recv_tx() || receipt->is_confirm_tx());
+        base::xtable_index_t target_tableindex = receipt->get_self_table_index(); // receipt should send to self table
+
+        top::base::xautostream_t<4096> stream(top::base::xcontext_t::instance());
+        receipt->serialize_to(stream);
+        vnetwork::xmessage_t msg = vnetwork::xmessage_t({stream.data(), stream.data() + stream.size()},
+                                                        receipt->is_recv_tx() ? xtxpool_v2::xtxpool_msg_send_receipt : xtxpool_v2::xtxpool_msg_recv_receipt);
+
+        auto auditor_cluster_addr =
+            m_router->sharding_address_from_tableindex(target_tableindex, net_driver->network_id(), common::xnode_type_t::consensus_auditor);
+        xassert(common::has<common::xnode_type_t::consensus_auditor>(auditor_cluster_addr.type()) || common::has<common::xnode_type_t::committee>(auditor_cluster_addr.type()) ||
+                common::has<common::xnode_type_t::zec>(auditor_cluster_addr.type()));
+
+        if (net_driver->address().cluster_address() == auditor_cluster_addr) {
+            xunit_info("xnetwork_proxy::send_receipt_msg broadcast receipt=%s,size=%zu,from_vnode:%s", receipt->dump().c_str(), stream.size(), net_driver->address().to_string().c_str());
+            net_driver->broadcast(msg);
+            non_shard_cross_receipts.push_back(receipt);
+        } else {
+            xunit_info("xnetwork_proxy::send_receipt_msg forward receipt=%s,size=%zu,from_vnode:%s,to_vnode:%s", receipt->dump().c_str(), stream.size(), net_driver->address().to_string().c_str(), auditor_cluster_addr.to_string().c_str());
+            net_driver->forward_broadcast_message(msg, vnetwork::xvnode_address_t{std::move(auditor_cluster_addr)});
+        }
+
+        // auditor cluster is different with validator for consensus table
+        if (target_tableindex.get_zone_index() == base::enum_chain_zone_consensus_index) {
+            auto validator_cluster_addr =
+                m_router->sharding_address_from_tableindex(target_tableindex, net_driver->network_id(), common::xnode_type_t::consensus_validator);
+            xassert(common::has<common::xnode_type_t::consensus_validator>(validator_cluster_addr.type()) ||
+                    common::has<common::xnode_type_t::committee>(validator_cluster_addr.type()) || common::has<common::xnode_type_t::zec>(validator_cluster_addr.type()));
+
+            xassert(validator_cluster_addr != auditor_cluster_addr);
+            if (net_driver->address().cluster_address() == validator_cluster_addr) {
+                xunit_info("xnetwork_proxy::send_receipt_msg broadcast receipt=%s,size=%zu,from_vnode:%s", receipt->dump().c_str(), stream.size(), net_driver->address().to_string().c_str());
+                net_driver->broadcast(msg);
+                non_shard_cross_receipts.push_back(receipt);            
+            } else {
+                xunit_info("xnetwork_proxy::send_receipt_msg forward receipt=%s,size=%zu,from_vnode:%s,to_vnode:%s", receipt->dump().c_str(), stream.size(), net_driver->address().to_string().c_str(), validator_cluster_addr.to_string().c_str());
+                net_driver->forward_broadcast_message(msg, vnetwork::xvnode_address_t{std::move(validator_cluster_addr)});
+            }            
+        }
+    } catch (top::error::xtop_error_t const & eh) {
+        xunit_warn("xnetwork_proxy::send_receipt_msg xvnetwork_error_t exception caught: %s; error code: %d", eh.what(), eh.code().value());
+    } catch (const std::exception & eh) {
+        xunit_warn("xnetwork_proxy::send_receipt_msg std exception caught: %s;", eh.what());
+    }
 }
 
 NS_END2

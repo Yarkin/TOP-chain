@@ -3,11 +3,15 @@
 // Licensed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <inttypes.h>
+#include <cinttypes>
 
 #include "xclockcertview.h"
 #include "xtimercertview.h"
 #include <cstdlib>
+
+#if defined(ENABLE_METRICS)
+#include "xmetrics/xmetrics.h"
+#endif
 
 namespace top
 {
@@ -65,7 +69,7 @@ namespace top
                     #ifdef __ENABLE_PRE_INIT_CLOCK_CERT__
                     if((NULL == m_latest_clock_cert))
                     {
-                        base::xauto_ptr<base::xvblock_t> latest_clock = get_vblockstore()->get_latest_cert_block(get_xclock_account_address());
+                        base::xauto_ptr<base::xvblock_t> latest_clock = get_vblockstore()->get_latest_cert_block(get_xclock_account_address(), metrics::blockstore_access_from_bft_init_blk);
                         if( (latest_clock) && (latest_clock->is_deliver(false)))
                         {
                             m_latest_clock_cert = latest_clock->get_cert();
@@ -75,7 +79,7 @@ namespace top
                     #endif
                     if(NULL == m_latest_vblock_cert)
                     {
-                        base::xauto_ptr<base::xvblock_t> latest_vblock(get_vblockstore()->get_latest_cert_block(account));
+                        base::xauto_ptr<base::xvblock_t> latest_vblock(get_vblockstore()->get_latest_cert_block(account, metrics::blockstore_access_from_bft_init_blk));
                         if( (latest_vblock) && (latest_vblock->is_deliver(false)))
                         {
                             m_latest_vblock_cert = latest_vblock->get_cert();
@@ -309,9 +313,12 @@ namespace top
             xcspdu_fire * _evt_obj = (xcspdu_fire*)&event;
             if( (_evt_obj->_packet.get_msg_type() == enum_consensus_msg_type_proposal) || (_evt_obj->_packet.get_msg_type() == enum_consensus_msg_type_commit) )
             {
-                std::string latest_block_cert;
-                m_latest_clock_cert->serialize_to_string(latest_block_cert);
-                _evt_obj->_packet.set_xclock_cert(latest_block_cert);//attach block certification for proposal
+                if(_evt_obj->_packet.get_xclock_cert().empty())
+                {
+                    std::string latest_block_cert;
+                    m_latest_clock_cert->serialize_to_string(latest_block_cert);
+                    _evt_obj->_packet.set_xclock_cert(latest_block_cert);//attach block certification for proposal
+                }
             }
             if(_evt_obj->_packet.get_block_clock() == 0)
             {
@@ -348,7 +355,7 @@ namespace top
                     else
                     {
                         //note:to enahance sync function, we need let proposal pass first and then check view alignment at driver layer again
-                        //if(_evt_obj->_packet.get_msg_type() != enum_consensus_msg_type_vote)
+                        if(_evt_obj->_packet.get_msg_type() != enum_consensus_msg_type_vote)
                         {
                             //xinfo("xclockcert_view::_after_verify_cert_job,allow un-alignment-packet=%s,even expect viewid:%llu,at node=0x%llx",_evt_obj->_packet.dump().c_str(),get_latest_viewid(),get_xip2_low_addr());
                             get_child_node()->push_event_down(*_evt_obj,this,0,0);////view just need control proposal and vote messages
@@ -489,7 +496,7 @@ namespace top
                         return false;//view just need control proposal and vote messages
                     }
                     xwarn("xclockcert_view::on_pdu_event_down,NOT-alignment-packet=%s,but expect viewid:%llu,at node=0x%llx",packet.dump().c_str(),get_latest_viewid(),get_xip2_low_addr());
-                    return false;//let every msg go driver layer now
+                    return true;//restore to restrict mode for vote that must alignwith viewid
                 }
             }
             return false;//let lower layer continue get notified

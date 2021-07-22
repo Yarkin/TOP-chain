@@ -25,7 +25,7 @@ int32_t xtx_verifier::verify_address(data::xtransaction_t const * trx) {
 
     if (xverifier_error::xverifier_success != xverifier::xtx_utl::address_is_valid(src_addr) ||
         xverifier_error::xverifier_success != xverifier::xtx_utl::address_is_valid(dst_addr)) {
-        xwarn("[global_trace][xtx_verifier][address_verify][address invalid], tx:%s", trx->dump().c_str());
+        xwarn("[global_trace][xtx_verifier][address_verify][address invalid], tx:%s,%s,%s", trx->dump().c_str(), src_addr.c_str(), dst_addr.c_str());
         return  xverifier_error::xverifier_error_addr_invalid;
     }
     return xverifier_error::xverifier_success;
@@ -77,6 +77,7 @@ int32_t xtx_verifier::verify_address_type(data::xtransaction_t const * trx) {
 
     if ( (src_addr_type != base::enum_vaccount_addr_type_secp256k1_user_account)
         && (src_addr_type != base::enum_vaccount_addr_type_secp256k1_user_sub_account)
+        && (src_addr_type != base::enum_vaccount_addr_type_secp256k1_eth_user_account)
         && (src_addr_type != base::enum_vaccount_addr_type_native_contract) ) {
         xwarn("[global_trace][xtx_verifier][address_verify]src addr invalid, tx:%s", trx->dump().c_str());
         return  xverifier_error::xverifier_error_addr_invalid;
@@ -86,6 +87,7 @@ int32_t xtx_verifier::verify_address_type(data::xtransaction_t const * trx) {
         && (dst_addr_type != base::enum_vaccount_addr_type_secp256k1_user_sub_account)
         && (dst_addr_type != base::enum_vaccount_addr_type_native_contract)
         && (dst_addr_type != base::enum_vaccount_addr_type_custom_contract)
+        && (dst_addr_type != base::enum_vaccount_addr_type_secp256k1_eth_user_account)        
         && (dst_addr_type != base::enum_vaccount_addr_type_black_hole) ) {
         xwarn("[global_trace][xtx_verifier][address_verify]dst addr invalid, tx:%s", trx->dump().c_str());
         return  xverifier_error::xverifier_error_addr_invalid;
@@ -93,14 +95,16 @@ int32_t xtx_verifier::verify_address_type(data::xtransaction_t const * trx) {
 
     if (trx->get_tx_type() == data::enum_xtransaction_type::xtransaction_type_transfer) {
         if ( (src_addr_type != base::enum_vaccount_addr_type_secp256k1_user_account)
-            && (dst_addr_type != base::enum_vaccount_addr_type_secp256k1_user_sub_account) ) {
-            xwarn("[global_trace][xtx_verifier][address_verify]dst addr invalid, tx:%s", trx->dump().c_str());
+            && (src_addr_type != base::enum_vaccount_addr_type_secp256k1_eth_user_account)
+            && (src_addr_type != base::enum_vaccount_addr_type_secp256k1_user_sub_account) ) {
+            xwarn("[global_trace][xtx_verifier][address_verify]src addr invalid , tx:%s", trx->dump().c_str());
             return  xverifier_error::xverifier_error_addr_invalid;
         }
         if ( (dst_addr_type != base::enum_vaccount_addr_type_secp256k1_user_account)
             && (dst_addr_type != base::enum_vaccount_addr_type_secp256k1_user_sub_account)
+            && (dst_addr_type != base::enum_vaccount_addr_type_secp256k1_eth_user_account)
             && (dst_addr_type != base::enum_vaccount_addr_type_black_hole) ) {
-            xwarn("[global_trace][xtx_verifier][address_verify]dst addr invalid, tx:%s", trx->dump().c_str());
+            xwarn("[global_trace][xtx_verifier][address_verify]dst addr invalid , tx:%s", trx->dump().c_str());
             return  xverifier_error::xverifier_error_addr_invalid;
         }
     }
@@ -170,6 +174,10 @@ int32_t xtx_verifier::sys_contract_tx_check(data::xtransaction_t const * trx_ptr
         sys_contract_rec_tcc_addr,
         sys_contract_sharding_reward_claiming_addr
     };
+
+    if (trx_ptr->get_target_action_name() == "nodeJoinNetwork") {
+        return xverifier_error::xverifier_error_contract_not_allowed;
+    }
 
     auto source_addr = trx_ptr->get_source_addr();
     auto target_addr = trx_ptr->get_target_addr();
@@ -242,7 +250,8 @@ int32_t xtx_verifier::verify_send_tx_source(data::xtransaction_t const * trx_ptr
         }
     } else {
         bool valid_addr_type = (addr_type == base::enum_vaccount_addr_type_secp256k1_user_account)
-                                || (addr_type == base::enum_vaccount_addr_type_secp256k1_user_sub_account);
+                                || (addr_type == base::enum_vaccount_addr_type_secp256k1_user_sub_account)
+                                || (addr_type == base::enum_vaccount_addr_type_secp256k1_eth_user_account);
         if (!valid_addr_type) {
             xwarn("[global_trace][xtx_verifier][verify_send_tx_source][fail], tx:%s,non_local tx addr type invalid", trx_ptr->dump().c_str());
             return xverifier_error_send_tx_source_invalid;

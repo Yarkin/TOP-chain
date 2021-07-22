@@ -11,7 +11,6 @@
 #include "xbasic/xcrypto_key.h"
 #include "xbase/xobject_ptr.h"
 #include "xvledger/xdataobj_base.hpp"
-#include "xvledger/xvtxindex.h"
 #include "xdata/xaction.h"
 #include "xdata/xproperty.h"
 #include "xdata/xdatautil.h"
@@ -20,19 +19,17 @@
 
 namespace top { namespace data {
 
-using base::enum_transaction_subtype;
-using base::enum_transaction_subtype_self;
-using base::enum_transaction_subtype_send;
-using base::enum_transaction_subtype_recv;
-using base::enum_transaction_subtype_confirm;
+#ifdef DEBUG
+#if !defined(ENABLE_CREATE_USER)
+#define ENABLE_CREATE_USER
+#endif
+#endif
 
 enum enum_xtransaction_type {
     xtransaction_type_create_user_account        = 0,    // create user account
-    xtransaction_type_create_contract_account    = 1,    // create contract account
-    xtransaction_type_run_contract2 = 2,                      // run contract in new mode
+
     xtransaction_type_run_contract               = 3,    // run contract
     xtransaction_type_transfer                   = 4,    // transfer asset
-    xtransaction_type_clickonce_create_contract_account = 5,// deploy clickonce contract
 
     xtransaction_type_vote                       = 20,
     xtransaction_type_abolish_vote               = 21,
@@ -41,8 +38,6 @@ enum enum_xtransaction_type {
     xtransaction_type_redeem_token_tgas          = 23,   // redeem token
     xtransaction_type_pledge_token_vote          = 27,   // pledge token for disk
     xtransaction_type_redeem_token_vote          = 28,   // redeem token
-
-    xtransaction_type_deploy_wasm_contract       = 29,   // deploy wasm contract
 
     xtransaction_type_max
 };
@@ -121,7 +116,9 @@ private:
     std::string       m_memo{};
 };
 
-class xtransaction_t : public xbase_dataobj_t<xtransaction_t, xdata_type_transaction>, public xtransaction_header {
+class xtransaction_t : public xbase_dataunit_t<xtransaction_t, xdata_type_transaction>, public xtransaction_header {
+ public:
+    static std::string transaction_type_to_string(uint16_t type);
  public:
     xtransaction_t();
  protected:
@@ -152,26 +149,22 @@ class xtransaction_t : public xbase_dataobj_t<xtransaction_t, xdata_type_transac
     void        adjust_target_address(uint32_t table_id);
     void        set_digest();
     void        set_digest(const uint256_t & digest) {m_transaction_hash = digest;};
-    void        set_tx_subtype(uint8_t subtype) {m_tx_subtype = subtype;};
     int32_t     set_different_source_target_address(const std::string & src_addr, const std::string & dts_addr);
     int32_t     set_same_source_target_address(const std::string & addr);
     void        set_last_trans_hash_and_nonce(uint256_t last_hash, uint64_t last_nonce);
     void        set_fire_and_expire_time(uint16_t const expire_duration);
     void        set_signature(const std::string & signature);
-    void        set_tx_subtype(enum_transaction_subtype type) {m_tx_subtype = type;}
+
     void        set_source_action(const xaction_t & action) {m_source_action = action;};
     void        set_target_action(const xaction_t & action) {m_target_action = action;};
     void        set_authorization(const std::string & authorization) {m_authorization = authorization;};
-    void        set_push_pool_timestamp(uint64_t push_pool_timestamp) {m_push_pool_timestamp = push_pool_timestamp;};
     void        set_len();
 
     int32_t     make_tx_create_user_account(const std::string & addr);
     int32_t     make_tx_create_contract_account(const data::xproperty_asset & asset_out, uint64_t tgas_limit, const std::string& code);
     int32_t     make_tx_transfer(const data::xproperty_asset & asset);
     int32_t     make_tx_run_contract(const data::xproperty_asset & asset_out, const std::string& function_name, const std::string& para);
-    int32_t make_tx_run_contract2(const data::xproperty_asset & asset_out, const std::string & function_name, const std::string & para);
     int32_t     make_tx_run_contract(std::string const & function_name, std::string const & param);
-    int32_t make_tx_run_contract2(std::string const & function_name, std::string const & param);
 
  public:  // get apis
     uint256_t           digest()const {return m_transaction_hash; }
@@ -180,15 +173,12 @@ class xtransaction_t : public xbase_dataobj_t<xtransaction_t, xdata_type_transac
     const std::string & get_source_addr()const {return m_source_action.get_account_addr();}
     const std::string & get_target_addr()const {return m_target_addr.empty() ? m_target_action.get_account_addr() : m_target_addr;}
     uint64_t            get_tx_nonce() const {return get_last_nonce() + 1;}
-    std::string         get_tx_subtype_str() const {return base::xvtxkey_t::transaction_subtype_to_string((enum_transaction_subtype)m_tx_subtype);}  // TODO(jimmy) delete
-    uint8_t             get_tx_subtype() const {return m_tx_subtype;}
     size_t              get_serialize_size() const;
     std::string         dump() const override;  // just for debug purpose
     xaction_t &         get_source_action() {return m_source_action;}
     xaction_t &         get_target_action() {return m_target_action;}
     const std::string & get_target_action_name() const {return m_target_action.get_action_name();}
     const std::string & get_authorization() const {return m_authorization;}
-    uint64_t            get_push_pool_timestamp() const {return m_push_pool_timestamp;}
     const std::string   get_parent_account() const {return m_source_action.get_parent_account();}
 
  private:
@@ -200,61 +190,10 @@ class xtransaction_t : public xbase_dataobj_t<xtransaction_t, xdata_type_transac
     std::string       m_target_addr{};
 
  private:  // local member should not serialize
-    uint8_t             m_tx_subtype{0};
     mutable std::string m_transaction_hash_str{};
-    uint64_t            m_push_pool_timestamp{0};
 };
 
 using xtransaction_ptr_t = xobject_ptr_t<xtransaction_t>;
-
-class xtransaction_store_t : public xbase_dataobj_t<xtransaction_store_t, xdata_type_transaction_store> {
- public:
-    xtransaction_store_t() = default;
- protected:
-    ~xtransaction_store_t() {}
-
- public:
-    virtual int32_t    do_write(base::xstream_t & stream) override;
-    virtual int32_t    do_read(base::xstream_t & stream) override;
-
-    void set_raw_tx(xtransaction_t* tx) {
-        if (m_raw_tx == nullptr && tx != nullptr) {
-            tx->add_ref();
-            m_raw_tx.attach(tx);
-        }
-    }
-
-    void set_send_unit_height(uint64_t height) {
-        if (m_send_unit_height < height) {
-            m_send_unit_height = height;
-            add_modified_count();
-        }
-    }
-
-    void set_recv_unit_height(uint64_t height) {
-        if (m_recv_unit_height < height) {
-            m_recv_unit_height = height;
-            add_modified_count();
-        }
-    }
-
-    void set_recv_ack_unit_height(uint64_t height) {
-        if (m_confirm_unit_height < height) {
-            m_confirm_unit_height = height;
-            add_modified_count();
-        }
-    }
-
- public:
-    xtransaction_ptr_t  m_raw_tx{nullptr};  // may be null
-    uint64_t            m_send_unit_height{0};
-    uint64_t            m_recv_unit_height{0};
-    uint64_t            m_confirm_unit_height{0};
-    uint32_t            m_flag{0};
-    std::string         m_ext;
-
-};
-using xtransaction_store_ptr_t = xobject_ptr_t<xtransaction_store_t>;
 
 }  // namespace data
 }  // namespace top

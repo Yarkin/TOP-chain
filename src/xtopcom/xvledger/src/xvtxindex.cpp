@@ -6,6 +6,7 @@
 #include <cinttypes>
 #include "../xvblock.h"
 #include "../xvtxindex.h"
+#include "xmetrics/xmetrics.h"
 
 namespace top
 {
@@ -74,11 +75,12 @@ namespace top
         xvtxindex_t::xvtxindex_t()
             : xdataunit_t(xdataunit_t::enum_xdata_type_undefine)
         {
+            XMETRICS_GAUGE(metrics::dataobject_xvtxindex, 1);
             m_raw_tx_obj    = NULL;
             m_block_flags = 0;
             m_block_height = 0;
             m_tx_phase_type = 0;
-#ifdef  DEBUG_LONG_CONFIRM_TX_ENABLE
+#ifdef  LONG_CONFIRM_CHECK
             m_block_clock   = 0;
 #endif
         }
@@ -86,6 +88,7 @@ namespace top
         xvtxindex_t::xvtxindex_t(xvblock_t & owner, xdataunit_t* raw_tx,const std::string & txhash, enum_transaction_subtype type)
         : xdataunit_t(xdataunit_t::enum_xdata_type_undefine)
         {
+            XMETRICS_GAUGE(metrics::dataobject_xvtxindex, 1);
             m_raw_tx_obj    = NULL;
             m_block_addr    = owner.get_account();
             m_block_height  = owner.get_height();
@@ -93,7 +96,7 @@ namespace top
             m_tx_hash       = txhash;
             m_tx_phase_type = type;
             m_block_flags   = (owner.get_block_flags() >> 8); //lowest 8bit is meaning less,so just skip it
-#ifdef  DEBUG_LONG_CONFIRM_TX_ENABLE
+#ifdef  LONG_CONFIRM_CHECK
             m_block_clock   = owner.get_clock();
 #endif
             m_raw_tx_obj = raw_tx;
@@ -103,8 +106,10 @@ namespace top
 
         xvtxindex_t::~xvtxindex_t()
         {
-            if(m_raw_tx_obj != NULL)
+            if(m_raw_tx_obj != NULL) {
                 m_raw_tx_obj->release_ref();
+            }
+            XMETRICS_GAUGE(metrics::dataobject_xvtxindex, -1);
         }
 
         int32_t xvtxindex_t::do_write(base::xstream_t & stream)
@@ -118,7 +123,7 @@ namespace top
 
             stream << m_tx_phase_type;
             stream << m_block_flags;
-#ifdef  DEBUG_LONG_CONFIRM_TX_ENABLE
+#ifdef  LONG_CONFIRM_CHECK
             stream.write_compact_var(m_block_clock);
 #endif
             return (stream.size() - begin_size);
@@ -135,7 +140,7 @@ namespace top
 
             stream >> m_tx_phase_type;
             stream >> m_block_flags;
-#ifdef  DEBUG_LONG_CONFIRM_TX_ENABLE
+#ifdef  LONG_CONFIRM_CHECK
             stream.read_compact_var(m_block_clock);
 #endif
             return (begin_size - stream.size());
@@ -143,7 +148,7 @@ namespace top
 
         const uint64_t xvtxindex_t::get_block_clock()   const
         {
-#ifdef  DEBUG_LONG_CONFIRM_TX_ENABLE
+#ifdef  LONG_CONFIRM_CHECK
             return m_block_clock;
 #else
             return 0;

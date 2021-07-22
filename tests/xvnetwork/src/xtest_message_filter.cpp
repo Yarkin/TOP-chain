@@ -103,7 +103,7 @@ public:
     common::xnode_address_t adr_edge_ver0 = get_address(test_version0, top::common::build_edge_sharding_address(test_network_id));
     common::xnode_address_t adr_edge_net1_vernull{common::build_edge_sharding_address(test_network_id),
                                                   common::xaccount_election_address_t{common::xnode_id_t{std::string{"test1"}}, common::xslot_id_t{}}};
-    common::xnode_address_t adr_archieve_ver1 = get_address(test_version1, top::common::build_archive_sharding_address(test_network_id));
+    common::xnode_address_t adr_archieve_ver1 = get_address(test_version1, top::common::build_archive_sharding_address(top::common::xarchive_group_id, test_network_id));
     common::xnode_address_t adr_broadcast_ver1 = get_address(test_version1, common::build_network_broadcast_sharding_address(test_network_id));
 
     top::xbyte_buffer_t       byte_buf = random_base58_bytes(20);
@@ -126,7 +126,7 @@ TEST_F(test_message_filter, test1) {
     // dummy_vhost_ptr_info
     common::xnode_id_t    hst_node_id = vhost_ptr->host_node_id();
     std::string           hst_node_id_str = hst_node_id.to_string();  // "test1"
-    common::xnetwork_id_t hst_net_id = vhost_ptr->network_id();       // 1
+    // common::xnetwork_id_t hst_net_id = vhost_ptr->network_id();       // 1
 
     common::xlogic_time_t vhost_logic_test_time = vhost_ptr->last_logic_time();
     int                   t = static_cast<xlogic_time_t>(vhost_logic_test_time);  // 10

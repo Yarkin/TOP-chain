@@ -151,11 +151,11 @@ void xcluster_query_manager::getBlock(xjson_proc_t & json_proc) {
     if (type == "height") {
         uint64_t hi = std::stoull(height);
         xdbg("height: %llu", hi);
-        auto vb = m_block_store->load_block_object(_owner_vaddress, hi, 0, true);
+        auto vb = m_block_store->load_block_object(_owner_vaddress, hi, 0, true, metrics::blockstore_access_from_rpc_get_block);
         xblock_t * bp = dynamic_cast<xblock_t *>(vb.get());
         result_json["value"] = m_bh.get_block_json(bp);
     } else if (type == "last") {
-        auto vb = m_block_store->get_latest_committed_block(_owner_vaddress);
+        auto vb = m_block_store->get_latest_committed_block(_owner_vaddress, metrics::blockstore_access_from_rpc_get_committed_block);
         xblock_t * bp = dynamic_cast<xblock_t *>(vb.get());
         result_json["value"] = m_bh.get_block_json(bp);
     }
@@ -166,7 +166,7 @@ void xcluster_query_manager::getBlock(xjson_proc_t & json_proc) {
 void xcluster_query_manager::getChainInfo(xjson_proc_t & json_proc) {
     xJson::Value jv;
     base::xvaccount_t _timer_vaddress(sys_contract_beacon_timer_addr);
-    auto vb = m_block_store->load_block_object(_timer_vaddress, 0, 0, true);
+    auto vb = m_block_store->load_block_object(_timer_vaddress, 0, 0, true, metrics::blockstore_access_from_rpc_get_chain_info);
     xblock_t * bp = static_cast<xblock_t *>(vb.get());
     if (bp != nullptr) {
         jv["first_timerblock_hash"] = bp->get_block_hash_hex_str();
@@ -373,14 +373,19 @@ void xcluster_query_manager::getElectInfo(xjson_proc_t & json_proc) {
     }
 
     addr = sys_contract_rec_elect_archive_addr;
-    std::string prop_name = std::string(XPROPERTY_CONTRACT_ELECTION_RESULT_KEY) + "_1";
+    std::string prop_name = data::election::get_property_by_group_id(common::xarchive_group_id);
     m_bh.query_account_property(j, addr, prop_name);
     if (j["archive"].isMember(target)) {
         ev.push_back("archiver");
     }
+    prop_name = data::election::get_property_by_group_id(common::xfull_node_group_id);
+    m_bh.query_account_property(j, addr, prop_name);
+    if (j["full_node"].isMember(target)) {
+        ev.push_back("full_node");
+    }
 
     addr = sys_contract_rec_elect_edge_addr;
-    prop_name = std::string(XPROPERTY_CONTRACT_ELECTION_RESULT_KEY) + "_1";
+    prop_name = data::election::get_property_by_group_id(common::xdefault_group_id);
     m_bh.query_account_property(j, addr, prop_name);
     if (j["edge"].isMember(target)) {
         ev.push_back("edger");
@@ -388,9 +393,9 @@ void xcluster_query_manager::getElectInfo(xjson_proc_t & json_proc) {
 
     std::string elect_info;
     if (ev.empty()) {
-        elect_info = "Now it is not elected as any node role.";
+        elect_info = "Not elected to any node role.";
     } else {
-        elect_info = "Now it is elected as ";
+        elect_info = "Elected as ";
         for (size_t i = 0; i < ev.size(); ++i) {
             elect_info = elect_info + ev[i];
             if (i == ev.size() - 1) {
@@ -506,7 +511,7 @@ void xcluster_query_manager::getLatestTables(xjson_proc_t & json_proc) {
     xJson::Value jv;
     for(auto i = 0; i < enum_vbucket_has_tables_count; ++i) {
         std::string addr = xblocktool_t::make_address_shard_table_account(i);
-        auto vb = m_block_store->get_latest_committed_block(addr);
+        auto vb = m_block_store->get_latest_committed_block(addr, metrics::blockstore_access_from_rpc_get_latest_tables);
         jv.append(static_cast<xJson::UInt64>(vb->get_height()));
         xdbg("getLatestTables addr %s, height %ull", addr.c_str(), vb->get_height());
     }

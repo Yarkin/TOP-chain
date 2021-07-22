@@ -24,15 +24,30 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v2
+        with:
+          ssh-key: ${{ secrets.XVM }}
+      
+      - name: Sync submodule
+        run: git submodule sync --recursive
+        
+      - name: Update submodule
+        run: git submodule update --init --force --recursive
 
       - name: Build XTOP DEBUG
         run: |
-          bash .github/scripts/fix_submodule.sh dev/fast_sync_develop
-          bash .github/scripts/build_xtop.sh test
+          bash .github/scripts/build_xtop.sh "test build_ci"
+
+      - name: UnitTest
+        run: |
+          bash .github/scripts/test_ut.sh
 
       - name: TEST XTOP AllInOne
-        # if: github.event.sender.id == ''
         env:
           RUN_NUM: ${{ github.run_number }}
         run: |
           bash .github/scripts/test_xtop_allinone.sh "$RUN_NUM"
+
+      - name: Notify
+        if: always()
+        run: |
+          bash .github/scripts/notify.sh ${{ job.status }} "${{ github.job }} job in worflow ${{ github.workflow }} of ${{ github.repository }} has ${{ job.status }}"

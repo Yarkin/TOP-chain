@@ -108,19 +108,21 @@ namespace top
             virtual bool        set_lock_block(base::xvblock_t * lastst_lock_block);//update block of  locked one
  
             //block managed fro proposal
-            xproposal_t*        add_proposal(base::xvblock_t * proposal,base::xvblock_t * parent_block,const uint32_t expired_ms);//add into local cache
+            xproposal_t*        add_proposal(base::xvblock_t * proposal,base::xvblock_t * parent_block,const uint32_t expired_ms,base::xvqcert_t * clock_cert);//add into local cache
             bool                add_proposal(xproposal_t & proposal_block);
-            bool                remove_proposal(const uint64_t view_id);
             bool                clean_proposals();
             xproposal_t*        find_proposal(const uint64_t view_id) const;
+            xproposal_t*        get_latest_proposal() const;
             base::xvblock_t*    get_latest_proposal_block() const;
             
             //block manage for certified block
-            bool                add_cert_block(base::xvblock_t* _target_block);
+            bool                on_cert_verified(base::xvqcert_t * new_cert);
+            bool                add_cert_block(base::xvblock_t* _target_block,bool & found_matched_proposal);
             bool                remove_cert_block(const uint64_t view_id);
             bool                clean_cert_blocks();
-            base::xvblock_t*    get_latest_cert_block() const;//caller need care to release reference once no-longer need
-            base::xvblock_t*    find_cert_block(const uint64_t view_id) const;//caller need care to release reference once no-longer need
+            base::xvblock_t*    get_latest_cert_block() const;
+            base::xvblock_t*    find_first_cert_block(const uint64_t block_height) const;
+            base::xvblock_t*    find_cert_block(const uint64_t view_id) const;
             base::xvblock_t*    find_cert_block(const uint64_t block_height,const std::string & block_hash);
  
             base::xauto_ptr<base::xvbindex_t> load_block_index(const uint64_t block_height,const std::string & block_hash);
@@ -140,6 +142,7 @@ namespace top
             int     safe_check_add_cert_fork(base::xvblock_t * _test_for_block);//rule to resolve any possible fork for cert 
             
             //return  > 0 when true, and return  < 0 when false, and return  0  when unknow
+            int     safe_check_follow_commit_branch(base::xvblock_t * _test_for_block); //test whether at commited branch
             int     safe_check_follow_locked_branch(base::xvblock_t * _test_for_block); //test whether at locked branch
             bool    safe_check_for_lock_block(base::xvblock_t * _locking_block);//safe rule for lock block
             
@@ -147,8 +150,10 @@ namespace top
             bool    safe_check_for_proposal_block(base::xvblock_t * _proposal_block);//safe rule for proposal block
             bool    safe_check_for_sync_block(base::xvblock_t * _commit_block);//safe rule for commit block
             
+            bool    safe_precheck_for_voting(xproposal_t* new_proposal);
             bool    safe_precheck_for_voting(base::xvblock_t * _voting_block);//safe rule for voting block
             //check again before send voting msg and after verified signature
+            bool    safe_finalcheck_for_voting(xproposal_t* new_proposal);
             bool    safe_finalcheck_for_voting(base::xvblock_t * _vote_block);//safe rule for voting block;
             
             //sanity check and verify for packet
@@ -161,6 +166,7 @@ namespace top
         protected:
             inline std::map<uint64_t,xproposal_t*> &    get_proposals()  {return m_proposal_blocks;}
             inline std::map<uint64_t,base::xvblock_t*>& get_cert_blocks(){return m_certified_blocks;}
+            bool    safe_align_with_blockstore(xproposal_t* new_proposal);
         private:
             /*
              Term: "Proposal-block"    = has full data(header,input,basic cert) of block but not finish verification and certificate

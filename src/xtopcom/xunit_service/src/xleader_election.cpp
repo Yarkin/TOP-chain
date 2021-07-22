@@ -21,16 +21,16 @@ static bool operator==(const xvip2_t & lhs, const xvip2_t & rhs) {
 NS_BEG2(top, xunit_service)
 
 // load manager tables
-int32_t xelection_cache_imp::get_tables(const xvip2_t & xip, std::vector<uint16_t> * tables) {
+int32_t xelection_cache_imp::get_tables(const xvip2_t & xip, std::vector<table_index> * tables) {
     auto zone_id = get_zone_id_from_xip2(xip);
     if (zone_id == base::enum_chain_zone_beacon_index) {
         for (uint16_t i = 0; i < MAIN_CHAIN_REC_TABLE_USED_NUM; i++) {
-            tables->push_back(i);
+            tables->push_back({base::enum_chain_zone_beacon_index, i});
         }
         return tables->size();
     } else if (zone_id == base::enum_chain_zone_zec_index) {
         for (uint16_t i = 0; i < MAIN_CHAIN_ZEC_TABLE_USED_NUM; i++) {
-            tables->push_back(i);
+            tables->push_back({base::enum_chain_zone_zec_index, i});
         }
     } else {
         {
@@ -38,7 +38,10 @@ int32_t xelection_cache_imp::get_tables(const xvip2_t & xip, std::vector<uint16_
             std::lock_guard<std::mutex> lock(m_mutex);
             auto iter = m_elect_data.find(tmp);
             if (iter != m_elect_data.end()) {
-                tables->insert(tables->begin(), iter->second.tables.begin(), iter->second.tables.end());
+                auto tables_v = iter->second.tables;
+                for(auto iter = tables_v.begin(); iter != tables_v.end(); iter++) {
+                    tables->push_back({base::enum_chain_zone_consensus_index, *iter});
+                } 
                 return tables->size();
             }
         }
@@ -227,7 +230,8 @@ int to_elect_set(const std::map<common::xslot_id_t, data::xnode_info_t> & node_m
     std::sort(tmp.begin(), tmp.end(), [](const data::xnode_info_t & a, const data::xnode_info_t & b) -> bool { return a.address.slot_id().value() < b.address.slot_id().value(); });
     for (size_t index = 0; index < tmp.size(); index++) {
         auto data = tmp[index];
-        elect_set.push_back({xcons_utl::to_xip2(data.address), data.election_info.joined_version, data.election_info.stake});
+        elect_set.push_back({xcons_utl::to_xip2(data.address), data.election_info.joined_version, data.election_info.comprehensive_stake});
+        xdbg("[xunitservice] account %s comprehensive stake %" PRIu64, data.address.account_address().c_str(), data.election_info.comprehensive_stake);
     }
     return elect_set.size();
 }

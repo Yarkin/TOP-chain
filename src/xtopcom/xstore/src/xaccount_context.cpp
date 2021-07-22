@@ -7,11 +7,11 @@
 
 #include "xstore/xstore_error.h"
 #include "xstore/xaccount_context.h"
-#include "xstore/xstore_property.h"
 
 #include "xbase/xlog.h"
 #include "xbase/xobject_ptr.h"
 #include "xvledger/xvledger.h"
+#include "xvledger/xvpropertyrules.h"
 #include "xcrypto/xckey.h"
 #include "xdata/xaction_parse.h"
 #include "xdata/xproperty.h"
@@ -22,36 +22,15 @@
 #include "xchain_timer/xchain_timer_face.h"
 #include "xdata/xgenesis_data.h"
 #include "xconfig/xconfig_register.h"
+#include "xconfig/xpredefined_configurations.h"
 #include "xutility/xstream_util.hpp"
 #include "xvm/manager/xcontract_address_map.h"
-#include "xconfig/xconfig_register.h"
 #include "xstake/xstake_algorithm.h"
 #include "xchain_upgrade/xchain_upgrade_center.h"
 
 using namespace top::base;
 
 namespace top { namespace store {
-
-#if 0
-#define CHECK_PROPERTY_MAX_NUM()
-do {\
-    TODO(jimmy) bstate get all propertys number
-    auto& config_register = top::config::xconfig_register_t::get_instance(); \
-    uint32_t custom_property_max_number =XGET_ONCHAIN_GOVERNANCE_PARAMETER(custom_property_max_number); \
-    if ((uint32_t)m_account->get_property_hash_map().size() >= custom_property_max_number) {\
-        return xaccount_property_number_exceed_max;\
-    }\
-}while(0)
-#endif
-
-#define CHECK_PROPERTY_NAME_LEN_MAX_NUM(key) \
-do {\
-    auto& config_register = top::config::xconfig_register_t::get_instance(); \
-    uint32_t custom_property_name_max_len = XGET_ONCHAIN_GOVERNANCE_PARAMETER(custom_property_name_max_len); \
-    if ((key).length() >= custom_property_name_max_len) {\
-        return xaccount_property_name_length_exceed_max;\
-    }\
-}while(0)
 
 #define CHECK_BSTATE_NULL_RETURN(bstate, funcname) \
 do {\
@@ -78,11 +57,27 @@ do {\
     }\
 }while(0)
 
-xaccount_context_t::xaccount_context_t(const xaccount_ptr_t & unitstate, xstore_face_t* store)
-: m_store(store) {
+xaccount_context_t::xaccount_context_t(const xaccount_ptr_t & unitstate) {
     m_account = unitstate;
+
+    m_latest_exec_sendtx_nonce = m_account->get_latest_send_trans_number();
+    m_latest_exec_sendtx_hash = m_account->account_send_trans_hash();
+    m_latest_create_sendtx_nonce = m_latest_exec_sendtx_nonce;
+    m_latest_create_sendtx_hash = m_latest_exec_sendtx_hash;
     m_canvas = make_object_ptr<base::xvcanvas_t>();
-    save_succ_result(); // save binlog first for roll back
+    xinfo("create context, address:%s,height:%ld,uri=%s",
+        unitstate->get_account().c_str(), unitstate->get_block_height(), m_account->get_bstate()->get_execute_uri().c_str());
+}
+
+// TODO(jimmy) this constructor api will be deleted later
+xaccount_context_t::xaccount_context_t(const xaccount_ptr_t & unitstate, xstore_face_t* store) {
+    m_account = unitstate;
+
+    m_latest_exec_sendtx_nonce = m_account->get_latest_send_trans_number();
+    m_latest_exec_sendtx_hash = m_account->account_send_trans_hash();
+    m_latest_create_sendtx_nonce = m_latest_exec_sendtx_nonce;
+    m_latest_create_sendtx_hash = m_latest_exec_sendtx_hash;
+    m_canvas = make_object_ptr<base::xvcanvas_t>();
     xinfo("create context, address:%s,height:%ld,uri=%s",
         unitstate->get_account().c_str(), unitstate->get_block_height(), m_account->get_bstate()->get_execute_uri().c_str());
 }
@@ -103,42 +98,6 @@ int32_t xaccount_context_t::create_user_account(const std::string& address) {
     // just for test debug
     base::vtoken_t add_token = (base::vtoken_t)(ASSET_TOP(100000000));
     return token_deposit(XPROPERTY_BALANCE_AVAILABLE, add_token);
-}
-
-int32_t xaccount_context_t::sub_contract_sub_account_check(const std::string& value) {
-    std::deque<std::string> values;
-    list_copy_get(XPORPERTY_CONTRACT_SUB_ACCOUNT_KEY, values);
-    for (auto & v : values) {
-        if (v == value) {
-            xwarn("xaccount_context_t::sub_contract_sub_account_check fail-repeat create contract. account=%s,contract=%s", get_address().c_str(), value.c_str());
-            return xaccount_property_sub_account_exist;
-        }
-    }
-    if (values.size() >= MAX_NORMAL_CONTRACT_ACCOUNT) {
-        xwarn("xaccount_context_t::sub_contract_sub_account_check fail-max contract count limit. account=%s,size=%zu", get_address().c_str(), values.size());
-        return xaccount_property_sub_account_overflow;
-    }
-    return xstore_success;
-}
-int32_t xaccount_context_t::set_contract_sub_account(const std::string& value) {
-    return list_push_back(XPORPERTY_CONTRACT_SUB_ACCOUNT_KEY, value);
-}
-
-int32_t xaccount_context_t::set_contract_parent_account(const uint64_t amount, const std::string& value) {
-    std::string _value;
-    if (!string_get(XPORPERTY_CONTRACT_PARENT_ACCOUNT_KEY, _value)) {
-        return xaccount_property_parent_account_exist;
-    }
-    uint64_t balance = amount;
-    top_token_transfer_in(balance);
-    return string_set(XPORPERTY_CONTRACT_PARENT_ACCOUNT_KEY, value);
-}
-
-int32_t xaccount_context_t::get_parent_account(std::string &value){
-    if (!string_get(XPORPERTY_CONTRACT_PARENT_ACCOUNT_KEY, value)) {
-        return xaccount_property_parent_account_exist;
-    }
-    return xaccount_property_parent_account_not_exist;
 }
 
 int32_t xaccount_context_t::token_transfer_out(const data::xproperty_asset& asset, uint64_t gas_fee, uint64_t service_fee) {
@@ -234,16 +193,6 @@ uint64_t xaccount_context_t::calc_decayed_tgas(){
         used_tgas = (decay_time - (m_timer_height - last_hour)) * get_used_tgas() / decay_time;
     }
     return used_tgas;
-}
-
-uint64_t xaccount_context_t::get_tgas_limit(){
-    int32_t ret = 0;
-    std::string v;
-    ret = string_get(XPROPERTY_CONTRACT_TGAS_LIMIT_KEY, v);
-    if (0 == ret) {
-        return (uint64_t)std::stoull(v);
-    }
-    return 0;
 }
 
 int32_t xaccount_context_t::check_used_tgas(uint64_t &cur_tgas_usage, uint64_t deposit, uint64_t& deposit_usage){
@@ -540,7 +489,7 @@ int32_t xaccount_context_t::merge_pledge_vote_property(){
         deserilize_vote_map_value(v.second, vote_num);
 
 #ifdef DEBUG
-        if(m_timer_height - lock_time >= duration / 60){
+        if(m_timer_height - lock_time >= duration / 6){
 #else
         if(m_timer_height - lock_time >= duration * 24 * 60 * 6){
 #endif
@@ -656,7 +605,7 @@ int32_t xaccount_context_t::redeem_pledge_vote_property(uint64_t num){
 }
 
 // calculate the top num needed to get specific votes
-uint64_t xaccount_context_t::get_top_by_vote(uint64_t vote_num, uint16_t duration) const {
+uint64_t xaccount_context_t::get_top_by_vote(uint64_t vote_num, uint16_t duration) {
     auto factor = MAX_TOP_VOTE_RATE;
     if (duration < MAX_VOTE_LOCK_DAYS) {
         uint64_t af = AMPLIFY_FACTOR;
@@ -678,40 +627,16 @@ uint64_t xaccount_context_t::get_top_by_vote(uint64_t vote_num, uint16_t duratio
     return top_num;
 }
 
-int32_t xaccount_context_t::set_contract_code(const std::string &code) {
-    auto& config_register = top::config::xconfig_register_t::get_instance();
-    uint32_t application_contract_code_max_len = XGET_ONCHAIN_GOVERNANCE_PARAMETER(application_contract_code_max_len);
-    if (code.size() == 0 || code.size() > application_contract_code_max_len) {
-        return xaccount_property_contract_code_size_invalid;
-    }
-
-    std::string old_code;
-    get_contract_code(old_code);
-    if (!old_code.empty()) {
-        xerror("xaccount_context_t::set_contract_code fail-already set code");
-        return xaccount_property_operate_fail;
-    }
-    // contract code is a native property, but store with user property
-    return string_set(data::XPROPERTY_CONTRACT_CODE, code);
-}
-
-int32_t xaccount_context_t::get_contract_code(std::string &code) {
-    // check account type
-    return string_get(data::XPROPERTY_CONTRACT_CODE, code);
-}
-
-
-
 int32_t xaccount_context_t::other_balance_to_available_balance(const std::string & property_name, base::vtoken_t token) {
     int32_t ret;
     ret = token_withdraw(property_name, token);
     if (xsuccess != ret) {
-        xerror("xaccount_context_t::other_balance_to_available_balance fail-withdraw balance, amount=%ld", token);
+        xwarn("xaccount_context_t::other_balance_to_available_balance fail-withdraw balance, amount=%ld", token);
         return ret;
     }
     ret = token_deposit(XPROPERTY_BALANCE_AVAILABLE, token);
     if (xsuccess != ret) {
-        xerror("xaccount_context_t::other_balance_to_available_balance fail-deposit balance, amount=%ld", token);
+        xwarn("xaccount_context_t::other_balance_to_available_balance fail-deposit balance, amount=%ld", token);
         return ret;
     }
     xdbg("xaccount_context_t::other_balance_to_available_balance property=%s,amount=%ld", property_name.c_str(), token);
@@ -726,7 +651,7 @@ int32_t xaccount_context_t::available_balance_to_other_balance(const std::string
     }
     ret = token_deposit(property_name, token);
     if (xsuccess != ret) {
-        xerror("xaccount_context_t::available_balance_to_other_balance fail-deposit balance, amount=%ld", token);
+        xwarn("xaccount_context_t::available_balance_to_other_balance fail-deposit balance, amount=%ld", token);
         return ret;
     }
     xdbg("xaccount_context_t::available_balance_to_other_balance property=%s,amount=%ld", property_name.c_str(), token);
@@ -766,33 +691,32 @@ xobject_ptr_t<base::xvbstate_t> xaccount_context_t::load_bstate(const std::strin
     if (other_addr.empty()) {
         return m_account->get_bstate();
     }
-    xaccount_ptr_t other_account = m_store->query_account(other_addr);
-    if (nullptr == other_account) {
-        xerror("xaccount_context_t::load_bstate fail-query other account.addr=%s", other_addr.c_str());
+
+    // if not assign height, then get latest connect block and state
+    base::xvaccount_t _vaddr(other_addr);
+    base::xauto_ptr<base::xvbstate_t> _bstate = base::xvchain_t::instance().get_xstatestore()->get_blkstate_store()->get_latest_connectted_block_state(_vaddr, metrics::statestore_access_from_store_bstate);
+    if (_bstate == nullptr) {
+        xerror("xaccount_context_t::load_bstate,fail-get latest connectted state.account=%s", other_addr.c_str());
         return nullptr;
     }
-    return other_account->get_bstate();
+    xdbg("xaccount_context_t::load_bstate,succ-get latest connectted state.account=%s,height=%ld", other_addr.c_str(), _bstate->get_block_height());
+    return _bstate;
 }
 xobject_ptr_t<base::xvbstate_t> xaccount_context_t::load_bstate(const std::string& other_addr, uint64_t height) {
     std::string query_addr = other_addr.empty() ? get_address() : other_addr;
     base::xvaccount_t _vaddr(query_addr);
-    base::xauto_ptr<base::xvblock_t> _block = base::xvchain_t::instance().get_xblockstore()->load_block_object(_vaddr, height, base::enum_xvblock_flag_committed, true);
-    if (_block == nullptr) {
-        xwarn("xaccount_context_t::load_bstate,fail-load block.account=%s,height=%ld", query_addr.c_str(), height);
-        return nullptr;
-    }
-    // TODO(jimmy) use statestore
-    xaccount_ptr_t account = m_store->get_target_state(_block.get());
-    if (account == nullptr) {
+    base::xauto_ptr<base::xvbstate_t> _bstate = base::xvchain_t::instance().get_xstatestore()->get_blkstate_store()->get_committed_block_state(_vaddr, height, metrics::statestore_access_from_store_bstate);
+    if (_bstate == nullptr) {
         xwarn("xaccount_context_t::load_bstate,fail-get target state fail.account=%s,height=%ld", query_addr.c_str(), height);
         return nullptr;
     }
-    return account->get_bstate();
+    xdbg("xaccount_context_t::load_bstate,succ-get latest committed state.account=%s,height=%ld", query_addr.c_str(),height);
+    return _bstate;
 }
 
 base::xauto_ptr<base::xstringvar_t> xaccount_context_t::load_string_for_write(base::xvbstate_t* bstate, const std::string & key) {
     if (false == bstate->find_property(key)) {
-        if (xnative_property_name_t::is_native_property(key)) {
+        if (base::xvpropertyrules_t::is_valid_native_property(key)) {
             return bstate->new_string_var(key, m_canvas.get());
         }
     }
@@ -804,7 +728,7 @@ base::xauto_ptr<base::xstringvar_t> xaccount_context_t::load_string_for_write(ba
 }
 base::xauto_ptr<base::xdequevar_t<std::string>> xaccount_context_t::load_deque_for_write(base::xvbstate_t* bstate, const std::string & key) {
     if (false == bstate->find_property(key)) {
-        if (xnative_property_name_t::is_native_property(key)) {
+        if (base::xvpropertyrules_t::is_valid_native_property(key)) {
             return bstate->new_string_deque_var(key, m_canvas.get());
         }
     }
@@ -816,7 +740,7 @@ base::xauto_ptr<base::xdequevar_t<std::string>> xaccount_context_t::load_deque_f
 }
 base::xauto_ptr<base::xmapvar_t<std::string>> xaccount_context_t::load_map_for_write(base::xvbstate_t* bstate, const std::string & key) {
     if (false == bstate->find_property(key)) {
-        if (xnative_property_name_t::is_native_property(key)) {
+        if (base::xvpropertyrules_t::is_valid_native_property(key)) {
             return bstate->new_string_map_var(key, m_canvas.get());
         }
     }
@@ -828,7 +752,7 @@ base::xauto_ptr<base::xmapvar_t<std::string>> xaccount_context_t::load_map_for_w
 }
 base::xauto_ptr<base::xtokenvar_t> xaccount_context_t::load_token_for_write(base::xvbstate_t* bstate, const std::string & key) {
     if (false == bstate->find_property(key)) {
-        if (xnative_property_name_t::is_native_property(key)) {
+        if (base::xvpropertyrules_t::is_valid_native_property(key)) {
             return bstate->new_token_var(key, m_canvas.get());
         }
     }
@@ -841,7 +765,7 @@ base::xauto_ptr<base::xtokenvar_t> xaccount_context_t::load_token_for_write(base
 }
 base::xauto_ptr<base::xvintvar_t<uint64_t>> xaccount_context_t::load_uin64_for_write(base::xvbstate_t* bstate, const std::string & key) {
     if (false == bstate->find_property(key)) {
-        if (xnative_property_name_t::is_native_property(key)) {
+        if (base::xvpropertyrules_t::is_valid_native_property(key)) {
             return bstate->new_uint64_var(key, m_canvas.get());
         }
     }
@@ -854,9 +778,10 @@ base::xauto_ptr<base::xvintvar_t<uint64_t>> xaccount_context_t::load_uin64_for_w
 }
 
 int32_t xaccount_context_t::check_create_property(const std::string& key) {
-    // TODO(jimmy) property rules offchain parameter
-    // CHECK_PROPERTY_NAME_LEN_MAX_NUM(key);
-    // CHECK_PROPERTY_MAX_NUM();
+    if (false == base::xvpropertyrules_t::is_valid_sys_contract_property(key)) {
+        xerror("xaccount_context_t::check_create_property,property name not valid.key=%s", key.c_str());
+        return xaccount_property_create_fail;
+    }
     if (get_bstate()->find_property(key)) {
         xerror("xaccount_context_t::check_create_property fail-already exist.propname=%s", key.c_str());
         return xaccount_property_create_fail;
@@ -1185,7 +1110,7 @@ int32_t xaccount_context_t::uint64_sub(const std::string& key, uint64_t change) 
     CHECK_PROPERTY_NULL_RETURN(propobj, "xaccount_context_t::uint64_sub", key);
     uint64_t oldvalue = propobj->get();
     if (oldvalue < change) {
-        xerror("xaccount_context_t::uint64_sub fail-invalid para.value=%ld,change=%ld", oldvalue, change);
+        xwarn("xaccount_context_t::uint64_sub fail-invalid para.value=%ld,change=%ld", oldvalue, change);
         return xaccount_property_operate_fail;
     }
     uint64_t newvalue = oldvalue - change;
@@ -1196,13 +1121,14 @@ int32_t xaccount_context_t::uint64_sub(const std::string& key, uint64_t change) 
 
 
 bool xaccount_context_t::get_transaction_result(xtransaction_result_t& result) {
-    // do some auto property make things
-    set_account_create_time();
+    std::string property_binlog;
+    m_canvas->encode(property_binlog);
 
-    save_succ_result();
+    std::string fullstate_bin;
+    get_bstate()->take_snapshot(fullstate_bin);
 
-    result.m_contract_txs       = m_succ_contract_txs;
-    result.m_property_binlog    = m_succ_property_binlog;
+    result.m_property_binlog    = property_binlog;
+    result.m_full_state         = fullstate_bin;
     return true;
 }
 
@@ -1224,51 +1150,87 @@ size_t xaccount_context_t::get_op_records_size() const {
 }
 
 bool xaccount_context_t::add_transaction(const xcons_transaction_ptr_t& trans) {
-    m_currect_transaction = nullptr;
+    m_contract_txs.clear();
     if (trans->is_self_tx() || trans->is_send_tx()) {
-        uint64_t latest_sendtx_nonce = m_account->get_latest_send_trans_number();
-        uint256_t latest_sendtx_hash = m_account->account_send_trans_hash();
-        if (latest_sendtx_nonce != trans->get_transaction()->get_last_nonce()
-            || false == trans->get_transaction()->check_last_trans_hash(latest_sendtx_hash)) {
-            xerror("xaccount_context_t::add_transaction fail-sendtx nonce unmatch. account=%s,account_tx_nonce=%ld,tx=%s",
-                get_address().c_str(), latest_sendtx_nonce, trans->dump().c_str());
+        if (m_latest_exec_sendtx_nonce != trans->get_transaction()->get_last_nonce()) {
+            xwarn("xaccount_context_t::add_transaction fail-sendtx nonce unmatch. account=%s,account_tx_nonce=%ld,tx=%s",
+                get_address().c_str(), m_latest_exec_sendtx_nonce, trans->dump().c_str());
             return false;
         }
+        m_latest_exec_sendtx_nonce = trans->get_transaction()->get_tx_nonce();
+        m_latest_exec_sendtx_hash = trans->get_tx_hash_256();
+
+        // try update latest create nonce
+        update_latest_create_nonce_hash(trans);  // self tx may create contract tx
     }
     xdbg("xaccount_context_t::add_transaction account=%s,height=%ld,tx=%s", get_address().c_str(), get_chain_height(), trans->dump(true).c_str());
     m_currect_transaction = trans;
     return true;
 }
-void xaccount_context_t::update_succ_tx_info() {
+bool xaccount_context_t::finish_exec_all_txs(const std::vector<xcons_transaction_ptr_t> & txs) {
     xassert(m_currect_transaction != nullptr);
-    const xcons_transaction_ptr_t& trans = m_currect_transaction;
 
-    // set latest sendtx nonce and hash
-    if (trans->is_self_tx() || trans->is_send_tx()) {
-        xassert(m_account->get_latest_send_trans_number() == trans->get_transaction()->get_last_nonce());
-        set_tx_info_latest_sendtx_num(trans->get_transaction()->get_tx_nonce());
-        set_tx_info_latest_sendtx_hash(trans->get_transaction()->get_digest_str());
+    // update account create time propertys
+    set_account_create_time();
+
+    // update tx related propertys
+    if (get_chain_height() > 0) { // no need set for genesis block
+        uint64_t new_sendtx_nonce = m_account->get_latest_send_trans_number();
+        uint256_t new_sendtx_hash = m_account->account_send_trans_hash();
+        uint32_t recv_tx_num = 0;
+        uint32_t confirm_tx_num = 0;
+        uint32_t send_tx_num = 0;
+        for (auto & tx : txs) {
+            if (tx->is_self_tx() || tx->is_send_tx()) {
+                if (new_sendtx_nonce != tx->get_transaction()->get_last_nonce()) {
+                    xerror("xaccount_context_t::finish_exec_all_txs fail-match send nonce hash.last_nonce=%ld,tx_nonce=%ld",
+                        new_sendtx_nonce, tx->get_transaction()->get_last_nonce());
+                    return false;
+                }
+                xassert(new_sendtx_nonce == tx->get_transaction()->get_last_nonce());
+                new_sendtx_nonce = tx->get_transaction()->get_tx_nonce();
+                new_sendtx_hash = tx->get_tx_hash_256();
+            }
+            if (tx->is_send_tx()) {
+                send_tx_num++;
+            }
+            if (tx->is_recv_tx()) {
+                recv_tx_num++;
+            }
+            if (tx->is_confirm_tx()) {
+                confirm_tx_num++;
+            }
+        }
+
+        // set latest sendtx nonce and hash
+        if (new_sendtx_nonce != m_account->get_latest_send_trans_number()) {
+            set_tx_info_latest_sendtx_num(new_sendtx_nonce);
+            std::string transaction_hash_str = std::string(reinterpret_cast<char*>(new_sendtx_hash.data()), new_sendtx_hash.size());
+            set_tx_info_latest_sendtx_hash(transaction_hash_str);
+        }
+
+        // set recvtx total number
+        if (recv_tx_num > 0) {
+            uint64_t recv_num = m_account->account_recv_trans_number();
+            set_tx_info_recvtx_num(recv_num + recv_tx_num);
+        }
+
+        // set unconfirm sendtx number
+        uint32_t old_unconfirm_num = m_account->get_unconfirm_sendtx_num();
+        if (old_unconfirm_num + send_tx_num < confirm_tx_num) {
+            xerror("xaccount_context_t::finish_exec_all_txs fail-unconfirm num unmatch.old_unconfirm_num=%d,send_tx_num=%d,confirm_tx_num=%d",
+                old_unconfirm_num, send_tx_num, confirm_tx_num);
+            return false;
+        }
+        uint32_t new_unconfirm_new = old_unconfirm_num + send_tx_num - confirm_tx_num;
+        if (new_unconfirm_new != old_unconfirm_num) {
+            set_tx_info_unconfirm_tx_num(new_unconfirm_new);
+        }
+        xdbg_info("xaccount_context_t::finish_exec_all_txs,account=%s,height=%ld,recv_tx_num=%d,send_tx_num=%d,confirm_tx_num=%d,new_sendtx_nonce=%ld",
+            get_address().c_str(), get_chain_height(), recv_tx_num, send_tx_num, confirm_tx_num, new_sendtx_nonce);
     }
 
-    // set recvtx total number
-    if (trans->is_recv_tx()) {
-        uint64_t recv_num = m_account->account_recv_trans_number();
-        set_tx_info_recvtx_num(recv_num + 1);
-    }
-
-    // set unconfirm sendtx number
-    uint32_t old_unconfirm_num = m_account->get_unconfirm_sendtx_num();
-    uint32_t new_unconfirm_new = old_unconfirm_num;
-    if (trans->is_send_tx()) {
-        new_unconfirm_new++;
-    }
-    if (trans->is_confirm_tx()) {
-        xassert(new_unconfirm_new > 0);
-        new_unconfirm_new--;
-    }
-    if (new_unconfirm_new != old_unconfirm_num) {
-        set_tx_info_unconfirm_tx_num(new_unconfirm_new);
-    }
+    return true;
 }
 
 void xaccount_context_t::set_account_create_time() {
@@ -1279,38 +1241,6 @@ void xaccount_context_t::set_account_create_time() {
     }
 }
 
-void xaccount_context_t::save_succ_result() {
-    if (!m_contract_txs.empty()) {
-        for (auto & tx : m_contract_txs) {
-            m_succ_contract_txs.push_back(tx);
-        }
-        m_contract_txs.clear();
-    }
-    std::string property_binlog;
-    m_canvas->encode(property_binlog);
-    m_succ_property_binlog = property_binlog;
-    auto & bstate = m_account->get_bstate();
-    bstate->serialize_to_string(m_origin_state_bin);  // save last bstate
-    xassert(!m_succ_property_binlog.empty());
-    if (nullptr != m_currect_transaction) {
-        xdbg_info("xaccount_context_t::save_succ_result this=%p,account=%s,height=%ld,succ_tx=%s,binlog_size=%zu,state_size=%zu",
-            this, get_address().c_str(), get_chain_height(), m_currect_transaction->dump().c_str(), property_binlog.size(), m_origin_state_bin.size());
-    }
-}
-void xaccount_context_t::revert_to_last_succ_result() {
-    // roll back fail tx result
-    if (!m_contract_txs.empty()) {
-        m_contract_txs.clear();
-    }
-    // roll back to last succ result
-    base::xauto_ptr<base::xvbstate_t> state_ptr = xvblock_t::create_state_object(m_origin_state_bin);
-    xassert(state_ptr != nullptr);
-    m_account = std::make_shared<xunit_bstate_t>(state_ptr.get());
-    m_canvas = make_object_ptr<base::xvcanvas_t>(m_succ_property_binlog);
-    xdbg_info("xaccount_context_t::revert_to_last_succ_result this=%p,account=%s,height=%ld,fail_tx=%s,binlog_size=%zu,state_size=%zu",
-        this, get_address().c_str(), get_chain_height(), m_currect_transaction->dump().c_str(), m_succ_property_binlog.size(), m_origin_state_bin.size());
-}
-
 void xaccount_context_t::set_source_pay_info(const data::xaction_asset_out& source_pay_info) {
     m_source_pay_info = source_pay_info;
 }
@@ -1319,30 +1249,23 @@ const data::xaction_asset_out& xaccount_context_t::get_source_pay_info() {
     return m_source_pay_info;
 }
 
-void xaccount_context_t::get_latest_sendtx_nonce_hash(uint64_t & nonce, uint256_t & hash) {
-    // 1.get latest sendtx from contract created txs
-    if (!m_contract_txs.empty()) {
-        auto & latest_sendtx = *m_contract_txs.rbegin();
-        nonce = latest_sendtx->get_transaction()->get_tx_nonce();
-        hash = latest_sendtx->get_transaction()->digest();
-        return;
+void xaccount_context_t::get_latest_create_nonce_hash(uint64_t & nonce, uint256_t & hash) {
+    nonce = m_latest_create_sendtx_nonce;
+    hash = m_latest_create_sendtx_hash;
+}
+
+void xaccount_context_t::update_latest_create_nonce_hash(const xcons_transaction_ptr_t & tx) {
+    xassert(tx->is_self_tx() || tx->is_send_tx());
+    // maybe not need update, it's ok
+    if (m_latest_create_sendtx_nonce == tx->get_tx_last_nonce()) {
+        m_latest_create_sendtx_nonce = tx->get_tx_nonce();
+        m_latest_create_sendtx_hash = tx->get_tx_hash_256();
     }
-    // 2.get latest sendtx from current tx
-    if (m_currect_transaction->is_send_tx() || m_currect_transaction->is_self_tx()) {
-        nonce = m_currect_transaction->get_transaction()->get_tx_nonce();
-        hash = m_currect_transaction->get_transaction()->digest();
-        return;
-    }
-    // 3.get latest sendtx from account
-    nonce = m_account->get_latest_send_trans_number();
-    hash = m_account->account_send_trans_hash();
 }
 
 int32_t xaccount_context_t::create_transfer_tx(const std::string & receiver, uint64_t amount) {
-    uint32_t deposit = 0;
     xassert(data::is_contract_address(common::xaccount_address_t{ get_address() }));
     if (data::is_user_contract_address(common::xaccount_address_t{ get_address() })) {
-        deposit = XGET_ONCHAIN_GOVERNANCE_PARAMETER(min_tx_deposit);
         xwarn("xaccount_context_t::create_transfer_tx fail to create user contract transaction from:%s,to:%s,amount:%" PRIu64,
                 get_address().c_str(), receiver.c_str(), amount);
         return xstore_user_contract_can_not_initiate_transaction;
@@ -1350,7 +1273,7 @@ int32_t xaccount_context_t::create_transfer_tx(const std::string & receiver, uin
 
     uint64_t latest_sendtx_nonce;
     uint256_t latest_sendtx_hash;
-    get_latest_sendtx_nonce_hash(latest_sendtx_nonce, latest_sendtx_hash);
+    get_latest_create_nonce_hash(latest_sendtx_nonce, latest_sendtx_hash);
 
     xtransaction_ptr_t tx = make_object_ptr<xtransaction_t>();
     data::xproperty_asset asset(amount);
@@ -1359,6 +1282,7 @@ int32_t xaccount_context_t::create_transfer_tx(const std::string & receiver, uin
     tx->set_different_source_target_address(get_address(), receiver);
     tx->set_fire_timestamp(m_timestamp);
     tx->set_expire_duration(0);
+    uint32_t deposit = 0;
     tx->set_deposit(deposit);
     tx->set_digest();
     tx->set_len();
@@ -1371,7 +1295,8 @@ int32_t xaccount_context_t::create_transfer_tx(const std::string & receiver, uin
         return xaccount_contract_number_exceed_max;
     }
     m_contract_txs.push_back(constx);
-    xdbg("xaccount_context_t::create_transfer_tx tx:%s,from:%s,to:%s,amount:%ld,nonce:%ld,deposit:%d",
+    update_latest_create_nonce_hash(constx);
+    xdbg_info("xaccount_context_t::create_transfer_tx tx:%s,from:%s,to:%s,amount:%ld,nonce:%ld,deposit:%d",
         tx->get_digest_hex_str().c_str(), get_address().c_str(), receiver.c_str(), amount, tx->get_tx_nonce(), deposit);
     return xstore_success;
 }
@@ -1385,7 +1310,7 @@ int32_t xaccount_context_t::generate_tx(const std::string& target_addr, const st
 
     uint64_t latest_sendtx_nonce;
     uint256_t latest_sendtx_hash;
-    get_latest_sendtx_nonce_hash(latest_sendtx_nonce, latest_sendtx_hash);
+    get_latest_create_nonce_hash(latest_sendtx_nonce, latest_sendtx_hash);
 
     xtransaction_ptr_t tx = make_object_ptr<xtransaction_t>();
     data::xproperty_asset asset(0);
@@ -1405,7 +1330,8 @@ int32_t xaccount_context_t::generate_tx(const std::string& target_addr, const st
         return xaccount_contract_number_exceed_max;
     }
     m_contract_txs.push_back(constx);
-    xdbg("xaccount_context_t::generate_tx tx:%s,from:%s,to:%s,func_name:%s,nonce:%ld,lasthash:%ld,func_param:%ld",
+    update_latest_create_nonce_hash(constx);
+    xdbg_info("xaccount_context_t::generate_tx tx:%s,from:%s,to:%s,func_name:%s,nonce:%ld,lasthash:%ld,func_param:%ld",
         tx->get_digest_hex_str().c_str(), get_address().c_str(), target_addr.c_str(), func_name.c_str(), tx->get_tx_nonce(), tx->get_last_hash(), base::xhash64_t::digest(func_param));
     return xstore_success;
 }
@@ -1414,10 +1340,29 @@ data::xblock_t*
 xaccount_context_t::get_block_by_height(const std::string & owner, uint64_t height) const {
     // TODO(jimmy)
     base::xvaccount_t _vaddr(owner);
-    base::xauto_ptr<base::xvblock_t> _block = base::xvchain_t::instance().get_xblockstore()->load_block_object(_vaddr, height, base::enum_xvblock_flag_committed, true);
+    XMETRICS_GAUGE(metrics::blockstore_access_from_account_context, 1);
+    base::xauto_ptr<base::xvblock_t> _block = base::xvchain_t::instance().get_xblockstore()->load_block_object(_vaddr, height, base::enum_xvblock_flag_committed, false);
     if (_block != nullptr) {
+        // system contract only need input for full-table
+        base::xvchain_t::instance().get_xblockstore()->load_block_input(_vaddr, _block.get());
         _block->add_ref();
         return dynamic_cast<data::xblock_t*>(_block.get());
+    }
+    return nullptr;
+}
+
+data::xblock_t*
+xaccount_context_t::get_next_full_block(const std::string & owner, const uint64_t cur_full_height) const {
+    base::xvaccount_t vaddr(owner);
+    uint64_t next_full_height = cur_full_height + XGET_CONFIG(fulltable_interval_block_num);
+    XMETRICS_GAUGE(metrics::blockstore_access_from_account_context, 1);
+    base::xauto_ptr<base::xvblock_t> block = base::xvchain_t::instance().get_xblockstore()->load_block_object(vaddr, next_full_height, base::enum_xvblock_flag_committed, false);
+    xdbg("xaccount_context_t::get_next_full_block owner=%s,cur_height=%llu,next_full_height=%llu", owner.c_str(), cur_full_height, next_full_height);
+
+    if (block != nullptr && block->get_block_level() == base::enum_xvblock_level_table && block->get_block_class() == base::enum_xvblock_class_full) {
+        base::xvchain_t::instance().get_xblockstore()->load_block_input(vaddr, block.get());
+        block->add_ref();
+        return dynamic_cast<data::xblock_t*>(block.get());
     }
     return nullptr;
 }
@@ -1434,8 +1379,7 @@ xaccount_context_t::get_blockchain_height(const std::string & owner) const {
         height = m_current_table_commit_height;
     } else {
         base::xvaccount_t _vaddr(owner);
-        base::xauto_ptr<base::xvblock_t> _block = base::xvchain_t::instance().get_xblockstore()->get_latest_committed_block(_vaddr);
-        height = _block->get_height();
+        height = base::xvchain_t::instance().get_xblockstore()->get_latest_committed_block_height(_vaddr);
     }
     xdbg("xaccount_context_t::get_blockchain_height owner=%s,height=%" PRIu64 "", owner.c_str(), height);
     return height;

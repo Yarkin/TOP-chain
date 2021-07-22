@@ -5,7 +5,13 @@
 
 #include "xconsaccount.h"
 #include "xconscontext.h"
+
+#if defined(ENABLE_METRICS)
+#include "xmetrics/xmetrics.h"
+#endif
+
 #include <cinttypes>
+
 namespace top
 {
     namespace xconsensus
@@ -50,7 +56,7 @@ namespace top
             //get prev hqc block from proposal
             if(NULL == hqc) //from backup
             {
-                base::xblock_vector latest_certs = get_vblockstore()->load_block_object(*this, proposal_block->get_height() - 1);
+                base::xblock_vector latest_certs = get_vblockstore()->load_block_object(*this, proposal_block->get_height() - 1, metrics::blockstore_access_from_bft_check_proposal);
                 if(false == latest_certs.get_vector().empty())
                 {
                     for(auto it = latest_certs.get_vector().begin(); it != latest_certs.get_vector().end(); ++it)
@@ -84,7 +90,7 @@ namespace top
                     it_prev_block= it_cur_block;
                     if(it_cur_block->get_prev_block() == NULL)//xdb might have prev block,let us reload it
                     {
-                        base::xauto_ptr<base::xvblock_t> _block = get_vblockstore()->load_block_object(*this, it_cur_block->get_height() -1,0,false);
+                        base::xauto_ptr<base::xvblock_t> _block = get_vblockstore()->load_block_object(*this, it_cur_block->get_height() -1,0,false, metrics::blockstore_access_from_bft_check_proposal);
                         if(_block != nullptr)
                             it_cur_block = _block.get();//safe to assign,since account not be idle at this moment
                         else
@@ -110,10 +116,8 @@ namespace top
             if(NULL == proposal_block)
                 return enum_xconsensus_error_bad_proposal;
             
-            if(check_proposal(proposal_block))
-                return enum_xconsensus_code_successful; //good by connect checking
-            else
-                return enum_xconsensus_code_need_data;
+            //xbft has enhanced block check and U.S will do addtional check,so here just pass to improve performance
+            return enum_xconsensus_code_successful;
         }
 
         //clock block always pass by higher layer to lower layer
@@ -124,8 +128,7 @@ namespace top
             {
                 base::xauto_ptr<xcsobject_t> ptr_engine_obj(create_engine_object());
             }
-            
-            base::xauto_ptr<base::xvblock_t>  highest_block(get_vblockstore()->get_latest_cert_block(*this));
+            base::xauto_ptr<base::xvblock_t>  highest_block(get_vblockstore()->get_latest_cert_block(*this, metrics::blockstore_access_from_bft_on_clock_fire));
             if(highest_block)
             {
                 xcsclock_fire * _clock_event = (xcsclock_fire*)&event;
@@ -154,8 +157,9 @@ namespace top
             {
                 if(get_child_node() != NULL)
                 {
-                    base::xblock_mptrs latest_list = get_vblockstore()->get_latest_blocks(*this);
-                    base::xauto_ptr<base::xvblock_t> latest_clock = get_vblockstore()->get_latest_cert_block(get_xclock_account_address());
+
+                    base::xblock_mptrs latest_list = get_vblockstore()->get_latest_blocks(*this, metrics::blockstore_access_from_bft_pdu_event_down);
+                    base::xauto_ptr<base::xvblock_t> latest_clock = get_vblockstore()->get_latest_cert_block(get_xclock_account_address(), metrics::blockstore_access_from_bft_pdu_event_down);
 
                     base::xauto_ptr<xproposal_start>_event_proposal_start(new xproposal_start());
                     _event_proposal_start->set_latest_commit(latest_list.get_latest_committed_block());
@@ -179,18 +183,17 @@ namespace top
                 return true;
             }
             //xdbgassert(check_proposal(_evt_obj->get_proposal()));
-
-            base::xblock_mptrs latest_list = get_vblockstore()->get_latest_blocks(*this);
+            base::xblock_mptrs latest_list = get_vblockstore()->get_latest_blocks(*this, metrics::blockstore_access_from_bft_consaccnt_on_proposal_start);
             if(NULL == _evt_obj->get_latest_commit())
                 _evt_obj->set_latest_commit(latest_list.get_latest_committed_block());
             if(NULL == _evt_obj->get_latest_lock())
                 _evt_obj->set_latest_lock(latest_list.get_latest_locked_block());
-            if(NULL == _evt_obj->get_latest_lock())
-                _evt_obj->set_latest_lock(latest_list.get_latest_cert_block());
+            if(NULL == _evt_obj->get_latest_cert())
+                _evt_obj->set_latest_cert(latest_list.get_latest_cert_block());
 
             if(NULL == _evt_obj->get_latest_clock())//auto fill latest clock
             {
-                base::xauto_ptr<base::xvblock_t> latest_clock = get_vblockstore()->get_latest_cert_block(get_xclock_account_address());
+                base::xauto_ptr<base::xvblock_t> latest_clock = get_vblockstore()->get_latest_cert_block(get_xclock_account_address(), metrics::blockstore_access_from_bft_consaccnt_on_proposal_start);
                 _evt_obj->set_latest_clock(latest_clock.get());
             }
 
@@ -223,21 +226,8 @@ namespace top
                 _batch_blocks[0] = _target_cert_block;
                 _batch_blocks[1] = _latest_lock_block;
                 //stored larger height block first for commit prove
-                get_vblockstore()->store_blocks(*this,_batch_blocks);//save to blockstore
-            }
-            else if(_evt_obj->get_error_code() == xconsensus::enum_xconsensus_error_outofdate)
-            {
-                base::xvblock_t* _latest_commit_block = _evt_obj->get_latest_commit();
-                base::xvblock_t* _latest_lock_block   = _evt_obj->get_latest_lock();
-                base::xvblock_t* _latest_cert_block   = _evt_obj->get_latest_cert();
-
-                std::vector<base::xvblock_t*> _batch_blocks;
-                _batch_blocks.resize(3);
-                _batch_blocks[0] = _latest_cert_block;
-                _batch_blocks[1] = _latest_lock_block;
-                _batch_blocks[2] = _latest_commit_block;
-                //stored larger height block first for commit prove
-                get_vblockstore()->store_blocks(*this,_batch_blocks);//save to blockstore
+                //get_vblockstore()->store_blocks(*this,_batch_blocks);//save to blockstore
+                get_vblockstore()->store_block(*this,_target_cert_block); //just store cert only
             }
             return false;//throw event up again to let txs-pool or other object start new consensus
         }
@@ -257,7 +247,8 @@ namespace top
             _batch_blocks[2] = _evt_obj->get_target_commit();
 
             //stored larger height block first for commit prove
-            get_vblockstore()->store_blocks(*this,_batch_blocks);//save to blockstore
+            //get_vblockstore()->store_blocks(*this,_batch_blocks);//save to blockstore
+            get_vblockstore()->store_block(*this,_evt_obj->get_target_commit()); //sore commit only
             return false;//throw event up again to let txs-pool or other object start new consensus
         }
 
@@ -292,7 +283,8 @@ namespace top
                 _batch_blocks[0] = _target_cert_block;
                 _batch_blocks[1] = _latest_lock_block;
                 //stored larger height block first for commit prove
-                get_vblockstore()->store_blocks(*this,_batch_blocks);//save to blockstore
+                //get_vblockstore()->store_blocks(*this,_batch_blocks);//save to blockstore
+                get_vblockstore()->store_block(*this,_evt_obj->get_target_block());
             }
             return true; //stop handle anymore
         }
