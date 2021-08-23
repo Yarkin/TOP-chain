@@ -28,7 +28,8 @@ xtop_vnode::xtop_vnode(observer_ptr<elect::ElectMain> const & elect_main,
                        observer_ptr<xunit_service::xcons_service_mgr_face> const & cons_mgr,
                        observer_ptr<xtxpool_service_v2::xtxpool_service_mgr_face> const & txpool_service_mgr,
                        observer_ptr<xtxpool_v2::xtxpool_face_t> const & txpool,
-                       observer_ptr<election::cache::xdata_accessor_face_t> const & election_cache_data_accessor)
+                       observer_ptr<election::cache::xdata_accessor_face_t> const & election_cache_data_accessor,
+                       observer_ptr<xbase_timer_driver_t> const & timer_driver)
   : m_elect_main{elect_main}
   , m_router{router}
   , m_store{store}
@@ -44,7 +45,8 @@ xtop_vnode::xtop_vnode(observer_ptr<elect::ElectMain> const & elect_main,
   , m_user_params{make_observer(std::addressof(data::xuser_params::get_instance()))}
   , m_the_binding_driver{std::make_shared<vnetwork::xvnetwork_driver_t>(
         m_vhost,
-        common::xnode_address_t{sharding_address, common::xaccount_election_address_t{m_vhost->host_node_id(), slot_id}, version, group_size, associated_blk_height})} {
+        common::xnode_address_t{sharding_address, common::xaccount_election_address_t{m_vhost->host_node_id(), slot_id}, version, group_size, associated_blk_height})}
+  , m_timer_driver{timer_driver} {
     bool is_edge_archive = common::has<common::xnode_type_t::storage>(m_the_binding_driver->type()) || common::has<common::xnode_type_t::edge>(m_the_binding_driver->type());
     bool is_frozen = common::has<common::xnode_type_t::frozen>(m_the_binding_driver->type());
     if (!is_edge_archive && !is_frozen) {
@@ -74,7 +76,8 @@ xtop_vnode::xtop_vnode(observer_ptr<elect::ElectMain> const & elect_main,
                        observer_ptr<xunit_service::xcons_service_mgr_face> const & cons_mgr,
                        observer_ptr<xtxpool_service_v2::xtxpool_service_mgr_face> const & txpool_service_mgr,
                        observer_ptr<xtxpool_v2::xtxpool_face_t> const & txpool,
-                       observer_ptr<election::cache::xdata_accessor_face_t> const & election_cache_data_accessor)
+                       observer_ptr<election::cache::xdata_accessor_face_t> const & election_cache_data_accessor,
+                       observer_ptr<xbase_timer_driver_t> const & timer_driver)
   : xtop_vnode{elect_main,
                group_info->node_element(vhost->host_node_id())->address().sharding_address(),
                group_info->node_element(vhost->host_node_id())->slot_id(),
@@ -92,7 +95,8 @@ xtop_vnode::xtop_vnode(observer_ptr<elect::ElectMain> const & elect_main,
                cons_mgr,
                txpool_service_mgr,
                txpool,
-               election_cache_data_accessor} {}
+               election_cache_data_accessor,
+               timer_driver} {}
 
 std::shared_ptr<vnetwork::xvnetwork_driver_face_t> const & xtop_vnode::vnetwork_driver() const noexcept {
     return m_the_binding_driver;
