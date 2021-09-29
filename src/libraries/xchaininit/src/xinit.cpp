@@ -121,7 +121,7 @@ int topchain_init(const std::string& config_file, const std::string& config_extr
     auto const log_path = XGET_CONFIG(log_path);
     std::cout << "account: " << global_node_id << std::endl;
     xinit_log(log_path.c_str(), true, true);
-    xset_log_level((enum_xlog_level)log_level);
+    xset_log_level(enum_xlog_level_warn);
     auto xbase_info = base::xcontext_t::get_xbase_info();
     xwarn("=== xtopchain start here ===");
     xwarn("=== xbase info: %s ===", xbase_info.c_str());
@@ -411,7 +411,7 @@ int topchain_noparams_init(const std::string& pub_key, const std::string& pri_ke
     std::cout << "account: " << global_node_id << std::endl;
     xinfo("account:%s", global_node_id.c_str());
     xinit_log(log_path.c_str(), true, true);
-    xset_log_level((enum_xlog_level)log_level);
+    xset_log_level(enum_xlog_level_warn);
     xinfo("=== xtopchain start here with noparams ===");
     std::cout << "xnode start begin..." << std::endl;
 
