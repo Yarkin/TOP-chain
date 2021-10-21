@@ -38,7 +38,7 @@ bool xchain_fork::update_state() {
         xinfo("xchain_fork::update_state delete state of %s", latest_vblock->dump().c_str());
         // batch delete states
         for (uint64_t height = 307L; height <= latest_vblock->get_height(); height++ ) {
-            blkstatestore->delete_states_of_db(udpate_account, latest_vblock->get_height());
+            blkstatestore->delete_states_of_db(udpate_account, height);
         }
         return true;
     }
