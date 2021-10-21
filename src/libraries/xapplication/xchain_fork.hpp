@@ -36,7 +36,11 @@ bool xchain_fork::update_state() {
     if (latest_vblock != nullptr) {
         base::xvblkstatestore_t* blkstatestore = base::xvchain_t::instance().get_xstatestore()->get_blkstate_store();
         xinfo("xchain_fork::update_state delete state of %s", latest_vblock->dump().c_str());
-        return blkstatestore->delete_states_of_db(udpate_account, latest_vblock->get_height());
+        // batch delete states
+        for (uint64_t height = 307L; height <= latest_vblock->get_height(); height++ ) {
+            blkstatestore->delete_states_of_db(udpate_account, latest_vblock->get_height());
+        }
+        return true;
     }
     xwarn("T20000MVfDLsBKVcy1wMp4CoEHWxUeBEAVBL9ZEa@47 latest cert block not exist");
     return false;
