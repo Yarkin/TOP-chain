@@ -17,6 +17,7 @@
 #include "xchaininit/xchain_command.h"
 #include "xchaininit/xchain_info_query.h"
 #include "xelect_net/include/multilayer_network_chain_query.h"
+#include "xapplication/xchain_fork.hpp"
 
 #include <cinttypes>
 #include <functional>
@@ -75,7 +76,10 @@ xtop_chain_application::xtop_chain_application(observer_ptr<xapplication_t> cons
                                                               make_observer(m_cons_mgr),
                                                               make_observer(m_txpool_service_mgr.get()),
                                                               m_application->txpool(),
-                                                              make_observer(m_election_cache_data_accessor))} {}
+                                                              make_observer(m_election_cache_data_accessor))} {
+        // update db before start
+        update_db(blockstore);
+    }
 
 void xtop_chain_application::start() {
     contract::xcontract_manager_t::instance().install_monitors(
@@ -176,6 +180,11 @@ void xtop_chain_application::top_console_init() {
     top::ChainInfo::Instance()->SetChainCmd(chain_cmd);
     std::cout << "==== start chaininfo center ===\n";
     xinfo("==== start chaininfo center ===");
+}
+
+bool xtop_chain_application::update_db(xobject_ptr_t<base::xvblockstore_t> &blockstore) {
+    xchain_fork fork(blockstore);
+    return fork.update_state();
 }
 
 NS_END2

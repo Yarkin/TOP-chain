@@ -74,6 +74,9 @@ public:
     std::string const & sign_key() const noexcept;
 
 protected:
+    bool update_db(xobject_ptr_t<base::xvblockstore_t> &blockstore);
+
+protected:
     virtual void load_last_election_data() = 0;  // should be a virtual member function? beacon chain & top chain?
 
     void on_election_data_updated(data::election::xelection_result_store_t const & election_result_store,
